@@ -35,16 +35,15 @@ const io = new Server(server, {
         methods: ["GET", "POST"],
         credentials: true
     },
-    // Налаштування для Heroku
     transports: ['websocket', 'polling'], 
     pingTimeout: 60000,
     pingInterval: 25000,
     allowEIO3: true
 });
 
-server.setTimeout(30000); // Heroku має 30-секундний тайм-аут
-server.keepAliveTimeout = 61000; // Heroku Load Balancer тайм-аут 60s
-server.headersTimeout = 62000; // Більше ніж keepAliveTimeout
+server.setTimeout(30000); 
+server.keepAliveTimeout = 61000; 
+server.headersTimeout = 62000; 
 
 app.set('trust proxy', 1);
 app.disable('x-powered-by');
@@ -53,7 +52,6 @@ const corsOptions = {
     origin: function (origin, callback) {
         console.log('CORS request from origin:', origin);
         if (!origin || process.env.NODE_ENV !== 'production') {
-            // Дозволити всі запити у dev або без origin (наприклад, curl)
             callback(null, true);
         } else if (allowedOrigins.includes(origin)) {
             callback(null, true);
@@ -70,26 +68,24 @@ const corsOptions = {
     optionsSuccessStatus: 204
 };
 
-// Middleware з Heroku-оптимізацією
 app.use(helmet({ 
     contentSecurityPolicy: false,
 }));
 app.use(cors(corsOptions));
 app.use(compression({ 
-    level: process.env.NODE_ENV === 'production' ? 9 : 1, // Максимальне стиснення в продакшн
-    threshold: '1kb', // Не стискати відповіді менше 1kb
+    level: process.env.NODE_ENV === 'production' ? 9 : 1, 
+    threshold: '1kb', 
     filter: (req, res) => {
         if (req.headers['x-no-compression']) {
-            // не стискати, якщо є цей заголовок
+           
             return false;
         }
         return compression.filter(req, res);
     }
 }));
 
-// Оптимізований парсер JSON для Heroku
 app.use(express.json({ 
-    limit: process.env.NODE_ENV === 'production' ? '2mb' : '5mb', // Менший ліміт у продакшн
+    limit: process.env.NODE_ENV === 'production' ? '2mb' : '5mb',
     type: ['application/json', 'text/plain']
 }));
 app.use(express.urlencoded({ 
@@ -98,7 +94,6 @@ app.use(express.urlencoded({
     parameterLimit: 1000
 }));
 
-// Кешування для статичних відповідей
 const statusCache = {
     data: null,
     timestamp: 0,
