@@ -3,7 +3,7 @@ const LRU = require('lru-cache');
 
 const rateLimitCache = new LRU({
     max: 10000,
-    ttl: 60000
+    ttl: 300000
 });
 
 const sessionCache = new LRU({
@@ -11,7 +11,7 @@ const sessionCache = new LRU({
     ttl: 3600000
 });
 
-const RATE_LIMIT_MAX = 5;
+const RATE_LIMIT_MAX = 50;
 const SESSION_TTL = 3600000;
 
 const extractApiKey = (req) => {

@@ -6,10 +6,10 @@ const LRU = require('lru-cache');
 
 const rateLimitCache = new LRU({
    max: 10000,
-   ttl: 5000
+   ttl: 30000
 });
 
-const RATE_LIMIT_MAX = 10;
+const RATE_LIMIT_MAX = 100;
 const MAX_PAYLOAD_SIZE = 2 * 1024 * 1024;
 
 class WebSocketHandler {
