@@ -44,23 +44,7 @@ const server = http.createServer(app);
 const { Server } = require('socket.io');
 const port = process.env.PORT || 3000;
 
-const allowedOrigins = [
-    'https://underpressureph7.github.io'
-];
-
 const corsOptions = {
-    // origin: function (origin, callback) {
-    //     if (!origin || process.env.NODE_ENV !== 'production') {
-    //         return callback(null, true);
-    //     }
-        
-    //     if (allowedOrigins.includes(origin)) {
-    //         return callback(null, true);
-        
-    //     }
-
-    //     callback(new ValidationError(`Origin ${origin} not allowed by CORS policy`));
-    // },
     origin: true,
     methods: ['GET', 'POST', 'PUT', 'DELETE'],
     allowedHeaders: ['Content-Type', 'Authorization', 'X-Player-ID'],
@@ -262,48 +246,75 @@ initializeWebSocket(io);
 
 let isShuttingDown = false;
 
-const gracefulShutdown = (signal) => {
+const gracefulShutdown = async (signal) => {
     if (isShuttingDown) return;
     isShuttingDown = true;
 
     console.log(`\nОтримано сигнал ${signal}. Починаю graceful shutdown...`);
 
-    io.close((err) => {
-        if (err) {
-            console.error('Помилка при закритті Socket.IO:', err);
-        } else {
-            console.log('Socket.IO сервер закрито.');
-        }
-    });
-
-    server.close(async () => {
-        console.log('HTTP-сервер закрито.');
-
-        try {
-            if (queue.size > 0 || queue.pending > 0) {
-                console.log(`Очікування завершення ${queue.size} завдань...`);
-                await Promise.race([
-                    queue.onIdle(),
-                    new Promise(resolve => setTimeout(resolve, 8000))
-                ]);
-                console.log('Черга завдань оброблена.');
-            }
-
-            await mongoose.disconnect();
-            console.log('MongoDB відключено.');
-            
-            console.log('Сервер успішно зупинено.');
-            process.exit(0);
-        } catch (error) {
-            console.error('Помилка під час shutdown:', error);
-            process.exit(1);
-        }
-    });
-
-    setTimeout(() => {
+    const shutdownTimeout = setTimeout(() => {
         console.error('Примусове завершення через таймаут.');
         process.exit(1);
-    }, 10000);
+    }, 25000);
+
+    try {
+        if (io && typeof io.close === 'function') {
+            try {
+                await new Promise((resolve) => {
+                    io.close((err) => {
+                        if (err && err.code !== 'ERR_SERVER_NOT_RUNNING') {
+                            console.error('Помилка при закритті Socket.IO:', err.message);
+                        } else {
+                            console.log('Socket.IO сервер закрито.');
+                        }
+                        resolve();
+                    });
+                });
+            } catch (ioError) {
+                console.log('Socket.IO вже закрито або недоступне.');
+            }
+        }
+
+        if (server.listening) {
+            await new Promise((resolve) => {
+                server.close((err) => {
+                    if (err) {
+                        console.error('Помилка при закритті HTTP сервера:', err.message);
+                    } else {
+                        console.log('HTTP-сервер закрито.');
+                    }
+                    resolve();
+                });
+            });
+        } else {
+            console.log('HTTP-сервер вже закрито.');
+        }
+
+        if (queue && (queue.size > 0 || queue.pending > 0)) {
+            console.log(`Очікування завершення ${queue.size + queue.pending} завдань...`);
+            await Promise.race([
+                queue.onIdle(),
+                new Promise(resolve => setTimeout(resolve, 8000))
+            ]);
+            console.log('Черга завдань оброблена.');
+        }
+
+        try {
+            await mongoose.disconnect();
+            console.log('MongoDB відключено.');
+        } catch (mongoError) {
+            console.error('Помилка при відключенні MongoDB:', mongoError.message);
+        }
+        
+        clearTimeout(shutdownTimeout);
+        console.log('Сервер успішно зупинено.');
+        process.exit(0);
+
+    } catch (error) {
+        console.error('Помилка під час shutdown:', error);
+        clearTimeout(shutdownTimeout);
+        process.exit(1);
+    }
 };
 
 process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
@@ -311,14 +322,16 @@ process.on('SIGINT', () => gracefulShutdown('SIGINT'));
 
 process.on('unhandledRejection', (reason, promise) => {
     console.error('Unhandled Rejection at:', promise, 'reason:', reason);
-    if (process.env.NODE_ENV === 'production') {
+    if (process.env.NODE_ENV === 'production' && !isShuttingDown) {
         gracefulShutdown('UNHANDLED_REJECTION');
     }
 });
 
 process.on('uncaughtException', (err) => {
     console.error('Uncaught Exception:', err);
-    gracefulShutdown('UNCAUGHT_EXCEPTION');
+    if (!isShuttingDown) {
+        gracefulShutdown('UNCAUGHT_EXCEPTION');
+    }
 });
 
 const startServer = async () => {
@@ -331,7 +344,6 @@ const startServer = async () => {
             console.log(`🚀 Сервер запущено на порту ${port}`);
             console.log(`📦 Режим: ${process.env.NODE_ENV || 'development'}`);
             console.log(`🆔 PID: ${process.pid}`);
-            console.log(`🌐 Allowed origins: ${allowedOrigins.join(', ')}`);
         });
 
     } catch (error) {
