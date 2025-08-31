@@ -1,15 +1,43 @@
 const express = require('express');
-const bodyParser = require('body-parser');
 const cors = require('cors');
 const http = require('http');
 const mongoose = require('mongoose');
 const compression = require('compression');
-const helmet = require('helmet')
+const helmet = require('helmet');
 const connectDB = require('./config/database');
 const battleStatsRoutes = require('./routes/battleStats');
 const queue = require('./config/queue');
 const metrics = require('./config/metrics');
 const { initializeWebSocket } = require('./routes/websockets');
+
+class AppError extends Error {
+    constructor(message, statusCode, code = null) {
+        super(message);
+        this.statusCode = statusCode;
+        this.code = code;
+        this.isOperational = true;
+        Error.captureStackTrace(this, this.constructor);
+    }
+}
+
+class ValidationError extends AppError {
+    constructor(message, details = null) {
+        super(message, 400, 'VALIDATION_ERROR');
+        this.details = details;
+    }
+}
+
+class NotFoundError extends AppError {
+    constructor(message = 'Resource not found') {
+        super(message, 404, 'NOT_FOUND');
+    }
+}
+
+class ServerError extends AppError {
+    constructor(message = 'Internal server error') {
+        super(message, 500, 'INTERNAL_ERROR');
+    }
+}
 
 const app = express();
 const server = http.createServer(app);
@@ -21,44 +49,17 @@ const allowedOrigins = [
     'https://juniorapi.github.io'
 ];
 
-const io = new Server(server, {
-    cors: {
-        origin: function (origin, callback) {
-            if (!origin || process.env.NODE_ENV !== 'production') {
-                callback(null, true);
-            } else if (allowedOrigins.includes(origin)) {
-                callback(null, true);
-            } else {
-                callback(null, false);
-            }
-        },
-        methods: ["GET", "POST"],
-        credentials: true
-    },
-    transports: ['websocket', 'polling'], 
-    pingTimeout: 60000,
-    pingInterval: 25000,
-    allowEIO3: true
-});
-
-server.setTimeout(30000); 
-server.keepAliveTimeout = 61000; 
-server.headersTimeout = 62000; 
-
-app.set('trust proxy', 1);
-app.disable('x-powered-by');
-
 const corsOptions = {
     origin: function (origin, callback) {
-        console.log('CORS request from origin:', origin);
         if (!origin || process.env.NODE_ENV !== 'production') {
-            callback(null, true);
-        } else if (allowedOrigins.includes(origin)) {
-            callback(null, true);
-        } else {
-            console.log('CORS blocked origin:', origin);
-            callback(new Error('Not allowed by CORS'));
+            return callback(null, true);
         }
+        
+        if (allowedOrigins.includes(origin)) {
+            return callback(null, true);
+        }
+        
+        callback(new ValidationError(`Origin ${origin} not allowed by CORS policy`));
     },
     methods: ['GET', 'POST', 'PUT', 'DELETE'],
     allowedHeaders: ['Content-Type', 'Authorization', 'X-Player-ID'],
@@ -68,19 +69,32 @@ const corsOptions = {
     optionsSuccessStatus: 204
 };
 
+const io = new Server(server, {
+    cors: corsOptions,
+    transports: ['websocket', 'polling'],
+    pingTimeout: 60000,
+    pingInterval: 25000,
+    allowEIO3: true
+});
+
+server.setTimeout(30000);
+server.keepAliveTimeout = 61000;
+server.headersTimeout = 62000;
+
+app.set('trust proxy', 1);
+app.disable('x-powered-by');
+
 app.use(helmet({ 
-    contentSecurityPolicy: false,
+    contentSecurityPolicy: false 
 }));
+
 app.use(cors(corsOptions));
+
 app.use(compression({ 
     level: process.env.NODE_ENV === 'production' ? 9 : 1, 
-    threshold: '1kb', 
+    threshold: '1kb',
     filter: (req, res) => {
-        if (req.headers['x-no-compression']) {
-           
-            return false;
-        }
-        return compression.filter(req, res);
+        return req.headers['x-no-compression'] ? false : compression.filter(req, res);
     }
 }));
 
@@ -88,6 +102,7 @@ app.use(express.json({
     limit: process.env.NODE_ENV === 'production' ? '2mb' : '5mb',
     type: ['application/json', 'text/plain']
 }));
+
 app.use(express.urlencoded({ 
     limit: process.env.NODE_ENV === 'production' ? '2mb' : '5mb',
     extended: false, 
@@ -95,9 +110,8 @@ app.use(express.urlencoded({
 }));
 
 const statusCache = {
-    data: null,
-    timestamp: 0,
-    ttl: 5000
+    static: { data: null, timestamp: 0, ttl: 300000 },
+    dynamic: { data: null, timestamp: 0, ttl: 5000 }
 };
 
 if (process.env.NODE_ENV !== 'production') {
@@ -107,9 +121,42 @@ if (process.env.NODE_ENV !== 'production') {
     });
 }
 
+const sendErrorResponse = (res, error) => {
+    const isDev = process.env.NODE_ENV === 'development';
+    const statusCode = error.statusCode || 500;
+    
+    const response = {
+        success: false,
+        error: {
+            code: error.code || 'UNKNOWN_ERROR',
+            message: error.message,
+            statusCode
+        },
+        timestamp: new Date().toISOString()
+    };
+    
+    if (isDev && error.stack) {
+        response.error.stack = error.stack;
+    }
+    
+    if (error.details) {
+        response.error.details = error.details;
+    }
+    
+    res.status(statusCode).json(response);
+};
+
+const sendSuccessResponse = (res, data = {}, statusCode = 200) => {
+    res.status(statusCode).json({
+        success: true,
+        data,
+        timestamp: new Date().toISOString()
+    });
+};
+
 app.get('/', (req, res) => {
     res.set('Cache-Control', 'public, max-age=300');
-    res.json({
+    sendSuccessResponse(res, {
         message: 'Сервер працює!',
         version: '1.0.0',
         environment: process.env.NODE_ENV || 'development'
@@ -120,41 +167,42 @@ app.get('/api/status', async (req, res) => {
     try {
         const now = Date.now();
         
-        if (statusCache.data && (now - statusCache.timestamp) < statusCache.ttl) {
-            return res.json(statusCache.data);
+        let staticData = statusCache.static.data;
+        if (!staticData || (now - statusCache.static.timestamp) > statusCache.static.ttl) {
+            staticData = {
+                version: '1.0.0',
+                environment: process.env.NODE_ENV || 'development',
+                nodeVersion: process.version,
+                platform: process.platform
+            };
+            statusCache.static.data = staticData;
+            statusCache.static.timestamp = now;
+        }
+        
+        let dynamicData = statusCache.dynamic.data;
+        if (!dynamicData || (now - statusCache.dynamic.timestamp) > statusCache.dynamic.ttl) {
+            const memory = process.memoryUsage();
+            dynamicData = {
+                status: 'ok',
+                database: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected',
+                uptime: Math.floor(process.uptime()),
+                memory: {
+                    heapUsed: Math.round(memory.heapUsed / 1024 / 1024) + 'MB',
+                    heapTotal: Math.round(memory.heapTotal / 1024 / 1024) + 'MB'
+                },
+                connections: {
+                    websocket: io.engine.clientsCount,
+                    total: io.engine.clientsCount
+                }
+            };
+            statusCache.dynamic.data = dynamicData;
+            statusCache.dynamic.timestamp = now;
         }
 
-        const isConnected = mongoose.connection.readyState === 1;
-        const memory = process.memoryUsage();
-        
-        const statusData = {
-            status: 'ok',
-            timestamp: new Date().toISOString(),
-            database: isConnected ? 'connected' : 'disconnected',
-            uptime: Math.floor(process.uptime()),
-            queue: {
-                size: queue.size,
-                pending: queue.pending,
-                isPaused: queue.isPaused
-            },
-            memory: {
-                heapUsed: Math.round(memory.heapUsed / 1024 / 1024) + 'MB',
-                heapTotal: Math.round(memory.heapTotal / 1024 / 1024) + 'MB'
-            }
-        };
-
-        statusCache.data = statusData;
-        statusCache.timestamp = now;
-
         res.set('Cache-Control', 'public, max-age=5');
-        res.json(statusData);
+        sendSuccessResponse(res, { ...staticData, ...dynamicData });
     } catch (error) {
-        console.error('Status check error:', error);
-        res.status(500).json({
-            status: 'error',
-            message: 'Internal server error',
-            timestamp: new Date().toISOString()
-        });
+        sendErrorResponse(res, new ServerError('Status check failed'));
     }
 });
 
@@ -164,10 +212,12 @@ app.get('/api/queue-status', (req, res) => {
         : '0';
 
     res.set('Cache-Control', 'public, max-age=2');
-    res.json({
-        queueSize: queue.size,
-        pendingCount: queue.pending,
-        isPaused: queue.isPaused,
+    sendSuccessResponse(res, {
+        queue: {
+            size: queue.size,
+            pending: queue.pending,
+            isPaused: queue.isPaused
+        },
         metrics: {
             totalRequests: metrics.totalRequests,
             successfulRequests: metrics.successfulRequests,
@@ -177,66 +227,80 @@ app.get('/api/queue-status', (req, res) => {
     });
 });
 
-// Routes
 app.use('/api/battle-stats', battleStatsRoutes);
 
-// Оптимізований error handler
-app.use((err, req, res, next) => {
+app.use((req, res, next) => {
+    next(new NotFoundError(`Route ${req.method} ${req.path} not found`));
+});
+
+app.use((error, req, res, next) => {
     if (process.env.NODE_ENV !== 'production') {
-        console.error('Error:', err.stack);
+        console.error('Error:', error);
     }
     
-    res.status(err.status || 500).json({
-        error: err.status === 404 ? 'Not Found' : 'Internal Server Error',
-        message: process.env.NODE_ENV === 'development' ? err.message : 'Щось пішло не так!'
-    });
+    if (error.name === 'CorsError') {
+        return sendErrorResponse(res, new ValidationError('CORS policy violation'));
+    }
+    
+    if (error.type === 'entity.parse.failed') {
+        return sendErrorResponse(res, new ValidationError('Invalid JSON payload'));
+    }
+    
+    if (error.type === 'entity.too.large') {
+        return sendErrorResponse(res, new ValidationError('Request payload too large'));
+    }
+    
+    if (!error.isOperational) {
+        error = new ServerError();
+    }
+    
+    sendErrorResponse(res, error);
 });
 
-// 404 handler
-app.use((req, res) => {
-    res.status(404).json({
-        error: 'Not Found',
-        message: 'Маршрут не знайдено',
-        path: req.path
-    });
-});
-
-// Ініціалізація WebSocket
 initializeWebSocket(io);
 
 let isShuttingDown = false;
 
-// Heroku-оптимізований graceful shutdown
 const gracefulShutdown = (signal) => {
     if (isShuttingDown) return;
     isShuttingDown = true;
 
-    console.log(`\nОтримано сигнал ${signal}. Починаю коректну зупинку...`);
+    console.log(`\nОтримано сигнал ${signal}. Починаю graceful shutdown...`);
+
+    io.close((err) => {
+        if (err) {
+            console.error('Помилка при закритті Socket.IO:', err);
+        } else {
+            console.log('Socket.IO сервер закрито.');
+        }
+    });
 
     server.close(async () => {
-        console.log('HTTP-сервер закрито. Нові запити не приймаються.');
+        console.log('HTTP-сервер закрито.');
 
         try {
             if (queue.size > 0 || queue.pending > 0) {
-                console.log(`Очікування завершення ${queue.size} завдань у черзі...`);
-                await queue.onIdle();
-                console.log('Всі завдання в черзі завершено.');
+                console.log(`Очікування завершення ${queue.size} завдань...`);
+                await Promise.race([
+                    queue.onIdle(),
+                    new Promise(resolve => setTimeout(resolve, 8000))
+                ]);
+                console.log('Черга завдань оброблена.');
             }
 
             await mongoose.disconnect();
-            console.log('З\'єднання з MongoDB закрито.');
+            console.log('MongoDB відключено.');
             
             console.log('Сервер успішно зупинено.');
             process.exit(0);
         } catch (error) {
-            console.error('Помилка під час зупинки:', error);
+            console.error('Помилка під час shutdown:', error);
             process.exit(1);
         }
     });
 
-    // Примусова зупинка через 10 секунд, якщо щось пішло не так
     setTimeout(() => {
-        console.error('Не вдалося коректно зупинити сервер за 10 секунд. Примусова зупинка.');
+        console.error('Примусове завершення через таймаут.');
         process.exit(1);
     }, 10000);
 };
@@ -244,25 +308,37 @@ const gracefulShutdown = (signal) => {
 process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
 process.on('SIGINT', () => gracefulShutdown('SIGINT'));
 
+process.on('unhandledRejection', (reason, promise) => {
+    console.error('Unhandled Rejection at:', promise, 'reason:', reason);
+    if (process.env.NODE_ENV === 'production') {
+        gracefulShutdown('UNHANDLED_REJECTION');
+    }
+});
+
+process.on('uncaughtException', (err) => {
+    console.error('Uncaught Exception:', err);
+    gracefulShutdown('UNCAUGHT_EXCEPTION');
+});
+
 const startServer = async () => {
     try {
-        console.log('Спроба підключення до бази даних...');
+        console.log('Підключення до бази даних...');
         await connectDB();
         console.log('База даних підключена успішно!');
         
         server.listen(port, () => {
-            console.log(`Сервер запущено на порту ${port}`);
-            console.log(`Режим: ${process.env.NODE_ENV || 'development'}`);
-            console.log(`PID: ${process.pid}`);
-            console.log(`Allowed origins: ${allowedOrigins.join(', ')}`);
+            console.log(`🚀 Сервер запущено на порту ${port}`);
+            console.log(`📦 Режим: ${process.env.NODE_ENV || 'development'}`);
+            console.log(`🆔 PID: ${process.pid}`);
+            console.log(`🌐 Allowed origins: ${allowedOrigins.join(', ')}`);
         });
 
     } catch (error) {
         console.error('Помилка запуску сервера:', error);
         process.exit(1);
     }
-}
+};
 
 startServer();
 
-module.exports = app;
+module.exports = { app, server, io };

@@ -13,7 +13,6 @@ const validateKey = (req, res, next) => {
     next();
 };
 
-// Функція валідації для WebSocket
 const validateKeySocket = (key) => {
     return key && VALID_KEYS.includes(key);
 };

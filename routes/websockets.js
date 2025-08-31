@@ -2,493 +2,465 @@ const { validateKeySocket } = require('../middleware/auth');
 const battleStatsService = require('../services/battleStatsService');
 const queue = require('../config/queue');
 const metrics = require('../config/metrics');
+const LRU = require('lru-cache');
 
-let globalIo;
+const rateLimitCache = new LRU({
+   max: 10000,
+   ttl: 5000
+});
 
-const rateLimitMap = new Map();
-const RATE_LIMIT_WINDOW = 5000;
-const RATE_LIMIT_MAX = 10; 
+const RATE_LIMIT_MAX = 10;
+const MAX_PAYLOAD_SIZE = 2 * 1024 * 1024;
 
 class WebSocketHandler {
-    constructor() {
-        this.connectedClients = new Map();
-    }
+   constructor(io) {
+       this.io = io;
+       this.connectedClients = new Map();
+   }
 
-    checkRateLimit(socketId) {
-        const now = Date.now();
-        const socketData = rateLimitMap.get(socketId) || { count: 0, resetTime: now + RATE_LIMIT_WINDOW };
-        
-        if (now > socketData.resetTime) {
-            socketData.count = 1;
-            socketData.resetTime = now + RATE_LIMIT_WINDOW;
-        } else {
-            socketData.count++;
-        }
-        
-        rateLimitMap.set(socketId, socketData);
-        return socketData.count <= RATE_LIMIT_MAX;
-    }
+   getRateLimitKey(socketId, key, playerId) {
+       return `${socketId}:${key}:${playerId || 'anonymous'}`;
+   }
 
-    cleanupRateLimit(socketId) {
-        rateLimitMap.delete(socketId);
-    }
+   checkRateLimit(socketId, key, playerId) {
+       const rateLimitKey = this.getRateLimitKey(socketId, key, playerId);
+       const count = rateLimitCache.get(rateLimitKey) || 0;
+       
+       if (count >= RATE_LIMIT_MAX) {
+           return false;
+       }
+       
+       rateLimitCache.set(rateLimitKey, count + 1);
+       return true;
+   }
 
-    sendError(callback, status, message, error = null) {
-        const errorResponse = {
-            status,
-            success: false,
-            message,
-            timestamp: new Date().toISOString()
-        };
-        
-        if (error && process.env.NODE_ENV === 'development') {
-            errorResponse.error = error.message;
-        }
-        
-        if (typeof callback === 'function') {
-            callback(errorResponse);
-        }
-    }
+   checkPayloadSize(data) {
+       const payloadSize = JSON.stringify(data).length;
+       return payloadSize <= MAX_PAYLOAD_SIZE;
+   }
 
-    sendSuccess(callback, data, status = 200) {
-        const response = {
-            status,
-            success: true,
-            timestamp: new Date().toISOString(),
-            ...data
-        };
-        
-        if (typeof callback === 'function') {
-            callback(response);
-        }
-    }
+   sendError(callback, status, message, error = null) {
+       const errorResponse = {
+           status,
+           success: false,
+           message,
+           timestamp: new Date().toISOString()
+       };
+       
+       if (error && process.env.NODE_ENV === 'development') {
+           errorResponse.error = error.message;
+       }
+       
+       if (typeof callback === 'function') {
+           callback(errorResponse);
+       }
+   }
 
-    validateRequest(socket, data, callback, requiresPlayerId = false) {
-        if (!this.checkRateLimit(socket.id)) {
-            this.sendError(callback, 429, 'Перевищено ліміт запитів');
-            return false;
-        }
+   sendSuccess(callback, data, status = 200) {
+       const response = {
+           status,
+           success: true,
+           timestamp: new Date().toISOString(),
+           ...data
+       };
+       
+       if (typeof callback === 'function') {
+           callback(response);
+       }
+   }
 
-        if (!data || typeof data !== 'object') {
-            this.sendError(callback, 400, 'Невалідні дані запиту');
-            return false;
-        }
+   validateRequest(socket, data, callback, requiresPlayerId = false) {
+       if (!data || typeof data !== 'object') {
+           this.sendError(callback, 400, 'Невалідні дані запиту');
+           return false;
+       }
 
-        if (!data.key || !validateKeySocket(data.key)) {
-            this.sendError(callback, 403, 'Невалідний API ключ');
-            return false;
-        }
+       if (!data.key || !validateKeySocket(data.key)) {
+           this.sendError(callback, 403, 'Невалідний API ключ');
+           return false;
+       }
 
-        if (requiresPlayerId && !data.playerId) {
-            this.sendError(callback, 400, 'Відсутній ID гравця');
-            return false;
-        }
+       if (requiresPlayerId && !data.playerId) {
+           this.sendError(callback, 400, 'Відсутній ID гравця');
+           return false;
+       }
 
-        return true;
-    }
+       if (!this.checkPayloadSize(data)) {
+           this.sendError(callback, 413, 'Розмір даних перевищує ліміт');
+           return false;
+       }
 
-    async handleUpdateStats(socket, data, callback) {
-        console.log(`🚀 WS updateStats від ${socket.id} для ключа: ${data?.key}`);
-        console.log(`📋 Дані:`, JSON.stringify(data, null, 2));
-        console.log(`⏰ Час: ${new Date().toISOString()}`);
+       if (!this.checkRateLimit(socket.id, data.key, data.playerId)) {
+           this.sendError(callback, 429, 'Перевищено ліміт запитів');
+           return false;
+       }
 
-        if (!this.validateRequest(socket, data, callback, true)) {
-            return;
-        }
+       return true;
+   }
 
-        try {
-            metrics.totalRequests++;
+   async handleUpdateStats(socket, data, callback) {
+       if (!this.validateRequest(socket, data, callback, true)) {
+           return;
+       }
 
-            this.sendSuccess(callback, {
-                message: 'Запит прийнято на обробку',
-                queueSize: queue.size
-            }, 202);
+       try {
+           metrics.totalRequests++;
 
-            queue.add(async () => {
-                try {
-                    const result = await battleStatsService.processDataAsync(
-                        data.key, 
-                        data.playerId, 
-                        data.body || data
-                    );
+           this.sendSuccess(callback, {
+               message: 'Запит прийнято на обробку',
+               queueSize: queue.size
+           }, 202);
 
-                    if (result) {
-                        metrics.successfulRequests++;
+           await queue.add(async () => {
+               try {
+                   const result = await battleStatsService.processDataAsync(
+                       data.key, 
+                       data.playerId, 
+                       data.body || data
+                   );
 
-                        socket.broadcast.emit('statsUpdated', {
-                            key: data.key,
-                            playerId: data.playerId,
-                            timestamp: Date.now()
-                        });
-                    } else {
-                        metrics.failedRequests++;
-                    }
-                } catch (error) {
-                    metrics.failedRequests++;
-                    console.error('❌ Помилка асинхронної обробки:', error);
-                    
-                    socket.emit('updateError', {
-                        key: data.key,
-                        playerId: data.playerId,
-                        error: error.message,
-                        timestamp: Date.now()
-                    });
-                }
-            }).catch(err => {
-                metrics.failedRequests++;
-                console.error('❌ Помилка в черзі:', err);
-                
-                socket.emit('queueError', {
-                    key: data.key,
-                    error: err.message,
-                    timestamp: Date.now()
-                });
-            });
+                   if (result) {
+                       metrics.successfulRequests++;
+                       this.io.to(`stats_${data.key}`).emit('statsUpdated', {
+                           key: data.key,
+                           playerId: data.playerId,
+                           timestamp: Date.now()
+                       });
+                   } else {
+                       metrics.failedRequests++;
+                   }
+               } catch (error) {
+                   metrics.failedRequests++;
+                   console.error('Помилка асинхронної обробки:', error);
+                   
+                   socket.emit('updateError', {
+                       key: data.key,
+                       playerId: data.playerId,
+                       error: error.message,
+                       timestamp: Date.now()
+                   });
+               }
+           });
 
-        } catch (error) {
-            console.error('❌ Помилка handleUpdateStats:', error);
-            this.sendError(callback, 500, 'Внутрішня помилка сервера', error);
-        }
-    }
+       } catch (error) {
+           console.error('Помилка handleUpdateStats:', error);
+           this.sendError(callback, 500, 'Внутрішня помилка сервера', error);
+       }
+   }
 
-    async handleGetStats(socket, data, callback) {
-        console.log(`📊 WS getStats від ${socket.id} для ключа: ${data?.key}`);
+   async handleGetStats(socket, data, callback) {
+       if (!this.validateRequest(socket, data, callback)) {
+           return;
+       }
 
-        if (!this.validateRequest(socket, data, callback)) {
-            return;
-        }
+       try {
+           const result = await battleStatsService.getStats(data.key);
+           this.sendSuccess(callback, result);
+       } catch (error) {
+           console.error('Помилка handleGetStats:', error);
+           this.sendError(callback, 500, 'Помилка при завантаженні даних', error);
+       }
+   }
 
-        try {
-            const result = await battleStatsService.getStats(data.key);
-            this.sendSuccess(callback, result);
-        } catch (error) {
-            console.error('❌ Помилка handleGetStats:', error);
-            this.sendError(callback, 500, 'Помилка при завантаженні даних', error);
-        }
-    }
+   async handleGetOtherPlayersStats(socket, data, callback) {
+       if (!this.validateRequest(socket, data, callback, true)) {
+           return;
+       }
 
-    async handleGetOtherPlayersStats(socket, data, callback) {
-        console.log(`👥 WS getOtherPlayersStats від ${socket.id} для ключа: ${data?.key}`);
+       try {
+           const result = await battleStatsService.getOtherPlayersStats(data.key, data.playerId);
+           this.sendSuccess(callback, result);
+       } catch (error) {
+           console.error('Помилка handleGetOtherPlayersStats:', error);
+           this.sendError(callback, 500, 'Помилка при завантаженні даних інших гравців', error);
+       }
+   }
 
-        if (!this.validateRequest(socket, data, callback, true)) {
-            return;
-        }
+   async handleImportStats(socket, data, callback) {
+       if (!this.validateRequest(socket, data, callback)) {
+           return;
+       }
 
-        try {
-            const result = await battleStatsService.getOtherPlayersStats(data.key, data.playerId);
-            this.sendSuccess(callback, result);
-        } catch (error) {
-            console.error('❌ Помилка handleGetOtherPlayersStats:', error);
-            this.sendError(callback, 500, 'Помилка при завантаженні даних інших гравців', error);
-        }
-    }
+       try {
+           this.sendSuccess(callback, { message: 'Запит на імпорт прийнято' }, 202);
 
-    async handleImportStats(socket, data, callback) {
-        console.log(`📥 WS importStats від ${socket.id} для ключа: ${data?.key}`);
+           await battleStatsService.importStats(data.key, data.body || data.importData);
+           
+           socket.emit('importCompleted', {
+               key: data.key,
+               timestamp: Date.now()
+           });
 
-        if (!this.validateRequest(socket, data, callback)) {
-            return;
-        }
+       } catch (error) {
+           console.error('Помилка handleImportStats:', error);
+           socket.emit('importError', {
+               key: data.key,
+               error: error.message,
+               timestamp: Date.now()
+           });
+       }
+   }
 
-        try {
-            this.sendSuccess(callback, { message: 'Запит на імпорт прийнято' }, 202);
+   async handleClearStats(socket, data, callback) {
+       if (!this.validateRequest(socket, data, callback)) {
+           return;
+       }
 
-            await battleStatsService.importStats(data.key, data.body || data.importData);
-            
-            socket.emit('importCompleted', {
-                key: data.key,
-                timestamp: Date.now()
-            });
+       try {
+           await battleStatsService.clearStats(data.key);
+           this.sendSuccess(callback, { 
+               message: `Дані для ключа ${data.key} успішно очищено` 
+           });
 
-        } catch (error) {
-            console.error('❌ Помилка handleImportStats:', error);
-            socket.emit('importError', {
-                key: data.key,
-                error: error.message,
-                timestamp: Date.now()
-            });
-        }
-    }
+           this.io.to(`stats_${data.key}`).emit('statsCleared', {
+               key: data.key,
+               timestamp: Date.now()
+           });
 
-    async handleClearStats(socket, data, callback) {
-        console.log(`🧹 WS clearStats від ${socket.id} для ключа: ${data?.key}`);
+       } catch (error) {
+           console.error('Помилка handleClearStats:', error);
+           this.sendError(callback, 500, 'Помилка при очищенні даних', error);
+       }
+   }
 
-        if (!this.validateRequest(socket, data, callback)) {
-            return;
-        }
+   async handleDeleteBattle(socket, data, callback) {
+       if (!this.validateRequest(socket, data, callback)) {
+           return;
+       }
 
-        try {
-            await battleStatsService.clearStats(data.key);
-            this.sendSuccess(callback, { 
-                message: `Дані для ключа ${data.key} успішно очищено` 
-            });
+       if (!data.battleId) {
+           this.sendError(callback, 400, 'Відсутній ID бою');
+           return;
+       }
 
-            globalIo.emit('statsCleared', {
-                key: data.key,
-                timestamp: Date.now()
-            });
+       try {
+           await battleStatsService.deleteBattle(data.key, data.battleId);
+           this.sendSuccess(callback, { 
+               message: `Бій ${data.battleId} успішно видалено` 
+           });
 
-        } catch (error) {
-            console.error('❌ Помилка handleClearStats:', error);
-            this.sendError(callback, 500, 'Помилка при очищенні даних', error);
-        }
-    }
+           this.io.to(`stats_${data.key}`).emit('battleDeleted', {
+               key: data.key,
+               battleId: data.battleId,
+               timestamp: Date.now()
+           });
 
-    async handleDeleteBattle(socket, data, callback) {
-        console.log(`🗑️ WS deleteBattle від ${socket.id} для ключа: ${data?.key}`);
+       } catch (error) {
+           console.error('Помилка handleDeleteBattle:', error);
+           this.sendError(callback, 500, 'Помилка при видаленні бою', error);
+       }
+   }
 
-        if (!this.validateRequest(socket, data, callback)) {
-            return;
-        }
+   async handleClearDatabase(socket, data, callback) {
+       try {
+           const result = await battleStatsService.clearDatabase();
+           this.sendSuccess(callback, result);
 
-        if (!data.battleId) {
-            this.sendError(callback, 400, 'Відсутній ID бою');
-            return;
-        }
+           this.io.emit('databaseCleared', {
+               timestamp: Date.now()
+           });
 
-        try {
-            await battleStatsService.deleteBattle(data.key, data.battleId);
-            this.sendSuccess(callback, { 
-                message: `Бій ${data.battleId} успішно видалено` 
-            });
+       } catch (error) {
+           console.error('Помилка handleClearDatabase:', error);
+           this.sendError(callback, 500, 'Помилка при очищенні бази даних', error);
+       }
+   }
 
-            globalIo.emit('battleDeleted', {
-                key: data.key,
-                battleId: data.battleId,
-                timestamp: Date.now()
-            });
+   handleGetQueueStatus(socket, callback) {
+       const successRate = metrics.totalRequests > 0 
+           ? ((metrics.successfulRequests / metrics.totalRequests) * 100).toFixed(2)
+           : '0';
 
-        } catch (error) {
-            console.error('❌ Помилка handleDeleteBattle:', error);
-            this.sendError(callback, 500, 'Помилка при видаленні бою', error);
-        }
-    }
+       this.sendSuccess(callback, {
+           queueSize: queue.size,
+           pendingCount: queue.pending,
+           isPaused: queue.isPaused,
+           metrics: {
+               totalRequests: metrics.totalRequests,
+               successfulRequests: metrics.successfulRequests,
+               failedRequests: metrics.failedRequests,
+               successRate: `${successRate}%`
+           }
+       });
+   }
 
-    async handleClearDatabase(socket, data, callback) {
-        console.log(`💥 WS clearDatabase від ${socket.id}`);
+   handleJoinRoom(socket, data, callback) {
+       if (!this.validateRequest(socket, data, callback)) {
+           return;
+       }
 
-        try {
-            const result = await battleStatsService.clearDatabase();
-            this.sendSuccess(callback, result);
+       const roomName = `stats_${data.key}`;
+       socket.join(roomName);
+       
+       this.connectedClients.set(socket.id, {
+           key: data.key,
+           playerId: data.playerId,
+           room: roomName,
+           connectedAt: Date.now()
+       });
 
-            globalIo.emit('databaseCleared', {
-                timestamp: Date.now()
-            });
+       this.sendSuccess(callback, { 
+           message: `Приєднано до кімнати ${roomName}`,
+           room: roomName
+       });
+   }
 
-        } catch (error) {
-            console.error('❌ Помилка handleClearDatabase:', error);
-            this.sendError(callback, 500, 'Помилка при очищенні бази даних', error);
-        }
-    }
+   handleLeaveRoom(socket, data, callback) {
+       if (!data || !data.key) {
+           this.sendError(callback, 400, 'Відсутній ключ кімнати');
+           return;
+       }
 
-    handleGetQueueStatus(socket, callback) {
-        const successRate = metrics.totalRequests > 0 
-            ? ((metrics.successfulRequests / metrics.totalRequests) * 100).toFixed(2)
-            : '0';
+       const roomName = `stats_${data.key}`;
+       socket.leave(roomName);
 
-        this.sendSuccess(callback, {
-            queueSize: queue.size,
-            pendingCount: queue.pending,
-            isPaused: queue.isPaused,
-            metrics: {
-                totalRequests: metrics.totalRequests,
-                successfulRequests: metrics.successfulRequests,
-                failedRequests: metrics.failedRequests,
-                successRate: `${successRate}%`
-            }
-        });
-    }
+       this.sendSuccess(callback, { 
+           message: `Вийшли з кімнати ${roomName}` 
+       });
+   }
 
-    handleJoinRoom(socket, data, callback) {
-        if (!this.validateRequest(socket, data, callback)) {
-            return;
-        }
+   handleGetConnectedClients(socket, callback) {
+       const clients = Array.from(this.connectedClients.entries()).map(([socketId, info]) => ({
+           socketId,
+           key: info.key,
+           playerId: info.playerId,
+           room: info.room,
+           connectedAt: info.connectedAt,
+           uptime: Date.now() - info.connectedAt
+       }));
 
-        const roomName = `stats_${data.key}`;
-        socket.join(roomName);
-        
-        this.connectedClients.set(socket.id, {
-            key: data.key,
-            playerId: data.playerId,
-            room: roomName,
-            connectedAt: Date.now()
-        });
+       this.sendSuccess(callback, { 
+           totalClients: this.io.engine.clientsCount,
+           connectedClients: clients
+       });
+   }
 
-        this.sendSuccess(callback, { 
-            message: `Приєднано до кімнати ${roomName}`,
-            room: roomName
-        });
+   handleDisconnect(socket, reason) {
+       this.connectedClients.delete(socket.id);
+       console.log(`Клієнт відключився: ${socket.id}, причина: ${reason}`);
+   }
+}
 
-        console.log(`🏠 Клієнт ${socket.id} приєднався до кімнати ${roomName}`);
-    }
-
-    handleLeaveRoom(socket, data, callback) {
-        if (!data || !data.key) {
-            this.sendError(callback, 400, 'Відсутній ключ кімнати');
-            return;
-        }
-
-        const roomName = `stats_${data.key}`;
-        socket.leave(roomName);
-
-        this.sendSuccess(callback, { 
-            message: `Вийшли з кімнати ${roomName}` 
-        });
-
-        console.log(`🚪 Клієнт ${socket.id} вийшов з кімнати ${roomName}`);
-    }
-
-    handleGetConnectedClients(socket, callback) {
-        const clients = Array.from(this.connectedClients.entries()).map(([socketId, info]) => ({
-            socketId,
-            key: info.key,
-            playerId: info.playerId,
-            room: info.room,
-            connectedAt: info.connectedAt,
-            uptime: Date.now() - info.connectedAt
-        }));
-
-        this.sendSuccess(callback, { 
-            totalClients: globalIo.engine.clientsCount,
-            connectedClients: clients
-        });
-    }
+function authenticateSocket(socket, next) {
+   const key = socket.handshake.query.key || socket.handshake.auth?.key;
+   
+   if (!key || !validateKeySocket(key)) {
+       return next(new Error('Невалідний API ключ'));
+   }
+   
+   socket.authKey = key;
+   next();
 }
 
 function initializeWebSocket(io) {
-    globalIo = io;
-    const wsHandler = new WebSocketHandler();
-    
-    battleStatsService.setIo(io);
-    
-    io.on('connection', (socket) => {
-        console.log(`🔌 Клієнт підключився: ${socket.id}`);
-        console.log(`🌐 Всього підключених: ${io.engine.clientsCount}`);
-        console.log(`📡 Transport: ${socket.conn.transport.name}`);
+   battleStatsService.setIo(io);
+   
+   io.use(authenticateSocket);
+   
+   io.on('connection', (socket) => {
+       const wsHandler = new WebSocketHandler(io);
+       
+       socket.emit('connected', {
+           socketId: socket.id,
+           serverTime: Date.now(),
+           message: 'Успішно підключено до BattleStats WebSocket'
+       });
 
-        socket.emit('connected', {
-            socketId: socket.id,
-            serverTime: Date.now(),
-            message: 'Успішно підключено до BattleStats WebSocket'
-        });
+       socket.on('updateStats', (data, callback) => {
+           wsHandler.handleUpdateStats(socket, data, callback);
+       });
 
-        socket.on('updateStats', (data, callback) => {
-            wsHandler.handleUpdateStats(socket, data, callback);
-        });
+       socket.on('getStats', (data, callback) => {
+           wsHandler.handleGetStats(socket, data, callback);
+       });
 
-        socket.on('getStats', (data, callback) => {
-            wsHandler.handleGetStats(socket, data, callback);
-        });
+       socket.on('getOtherPlayersStats', (data, callback) => {
+           wsHandler.handleGetOtherPlayersStats(socket, data, callback);
+       });
 
-        socket.on('getOtherPlayersStats', (data, callback) => {
-            wsHandler.handleGetOtherPlayersStats(socket, data, callback);
-        });
+       socket.on('importStats', (data, callback) => {
+           wsHandler.handleImportStats(socket, data, callback);
+       });
 
-        socket.on('importStats', (data, callback) => {
-            wsHandler.handleImportStats(socket, data, callback);
-        });
+       socket.on('clearStats', (data, callback) => {
+           wsHandler.handleClearStats(socket, data, callback);
+       });
 
-        socket.on('clearStats', (data, callback) => {
-            wsHandler.handleClearStats(socket, data, callback);
-        });
+       socket.on('deleteBattle', (data, callback) => {
+           wsHandler.handleDeleteBattle(socket, data, callback);
+       });
 
-        socket.on('deleteBattle', (data, callback) => {
-            wsHandler.handleDeleteBattle(socket, data, callback);
-        });
+       socket.on('clearDatabase', (data, callback) => {
+           wsHandler.handleClearDatabase(socket, data, callback);
+       });
 
-        socket.on('clearDatabase', (data, callback) => {
-            wsHandler.handleClearDatabase(socket, data, callback);
-        });
+       socket.on('getQueueStatus', (callback) => {
+           wsHandler.handleGetQueueStatus(socket, callback);
+       });
 
-        socket.on('getQueueStatus', (callback) => {
-            wsHandler.handleGetQueueStatus(socket, callback);
-        });
+       socket.on('joinRoom', (data, callback) => {
+           wsHandler.handleJoinRoom(socket, data, callback);
+       });
 
-        socket.on('joinRoom', (data, callback) => {
-            wsHandler.handleJoinRoom(socket, data, callback);
-        });
+       socket.on('leaveRoom', (data, callback) => {
+           wsHandler.handleLeaveRoom(socket, data, callback);
+       });
 
-        socket.on('leaveRoom', (data, callback) => {
-            wsHandler.handleLeaveRoom(socket, data, callback);
-        });
+       socket.on('getConnectedClients', (callback) => {
+           wsHandler.handleGetConnectedClients(socket, callback);
+       });
 
-        socket.on('getConnectedClients', (callback) => {
-            wsHandler.handleGetConnectedClients(socket, callback);
-        });
+       socket.on('ping', (callback) => {
+           const response = {
+               status: 200,
+               success: true,
+               message: 'pong',
+               serverTime: Date.now(),
+               clientId: socket.id
+           };
+           
+           if (typeof callback === 'function') {
+               callback(response);
+           } else {
+               socket.emit('pong', response);
+           }
+       });
 
-        socket.on('ping', (callback) => {
-            const response = {
-                status: 200,
-                success: true,
-                message: 'pong',
-                serverTime: Date.now(),
-                clientId: socket.id
-            };
-            
-            if (typeof callback === 'function') {
-                callback(response);
-            } else {
-                socket.emit('pong', response);
-            }
-        });
+       socket.on('disconnect', (reason) => {
+           wsHandler.handleDisconnect(socket, reason);
+       });
 
-        socket.on('disconnect', (reason) => {
-            console.log(`❌ Клієнт відключився: ${socket.id}, причина: ${reason}`);
-            
-            wsHandler.cleanupRateLimit(socket.id);
-            wsHandler.connectedClients.delete(socket.id);
-            
-            console.log(`🌐 Залишилось підключених: ${io.engine.clientsCount - 1}`);
-        });
+       socket.on('error', (error) => {
+           console.error(`Помилка сокета ${socket.id}:`, error);
+       });
+   });
 
-        socket.on('error', (error) => {
-            console.error(`🚨 Помилка сокета ${socket.id}:`, error);
-        });
+   io.engine.on('connection_error', (err) => {
+       console.error('Помилка підключення Socket.IO:', err);
+   });
 
-        socket.conn.on('error', (error) => {
-            console.error(`🔌 Помилка транспорту ${socket.id}:`, error);
-        });
-
-        socket.conn.on('close', (reason) => {
-            console.log(`🔌 Транспорт закрито ${socket.id}:`, reason);
-        });
-    });
-
-    io.engine.on('connection_error', (err) => {
-        console.error('🚨 Помилка підключення Socket.IO:', err);
-    });
-
-    setInterval(() => {
-        const now = Date.now();
-        for (const [socketId, data] of rateLimitMap.entries()) {
-            if (now > data.resetTime + RATE_LIMIT_WINDOW) {
-                rateLimitMap.delete(socketId);
-            }
-        }
-    }, 60000);
-
-    console.log('🚀 WebSocket сервер повністю ініціалізовано');
+   console.log('WebSocket сервер ініціалізовано');
 }
 
 function getIo() {
-    return globalIo;
+   return this.io;
 }
 
-function broadcastToRoom(room, event, data) {
-    if (globalIo) {
-        globalIo.to(room).emit(event, data);
-    }
+function broadcastToRoom(io, room, event, data) {
+   if (io) {
+       io.to(room).emit(event, data);
+   }
 }
 
-function broadcastGlobally(event, data) {
-    if (globalIo) {
-        globalIo.emit(event, data);
-    }
+function broadcastGlobally(io, event, data) {
+   if (io) {
+       io.emit(event, data);
+   }
 }
 
 module.exports = { 
-    initializeWebSocket, 
-    getIo, 
-    broadcastToRoom, 
-    broadcastGlobally 
+   initializeWebSocket, 
+   getIo, 
+   broadcastToRoom, 
+   broadcastGlobally 
 };
