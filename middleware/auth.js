@@ -1,12 +1,12 @@
 const VALID_KEYS = require('../config/validKey');
-const LRU = require('lru-cache');
+const { LRUCache } = require('lru-cache');
 
-const rateLimitCache = new LRU({
+const rateLimitCache = new LRUCache({
     max: 10000,
     ttl: 300000
 });
 
-const sessionCache = new LRU({
+const sessionCache = new LRUCache({
     max: 5000,
     ttl: 3600000
 });

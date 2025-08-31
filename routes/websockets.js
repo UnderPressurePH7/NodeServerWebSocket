@@ -2,9 +2,9 @@ const { validateKeySocket, createSession, validateSession, cleanupSession, authe
 const battleStatsService = require('../services/battleStatsService');
 const queue = require('../config/queue');
 const metrics = require('../config/metrics');
-const LRU = require('lru-cache');
+const { LRUCache } = require('lru-cache');
 
-const rateLimitCache = new LRU({
+const rateLimitCache = new LRUCache({
    max: 10000,
    ttl: 30000
 });
