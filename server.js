@@ -45,8 +45,7 @@ const { Server } = require('socket.io');
 const port = process.env.PORT || 3000;
 
 const allowedOrigins = [
-    'https://underpressureph7.github.io',
-    'https://juniorapi.github.io'
+    'https://underpressureph7.github.io'
 ];
 
 const corsOptions = {
