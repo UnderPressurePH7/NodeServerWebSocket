@@ -51,14 +51,8 @@ const createSuccessResponse = (data, meta = {}) => {
     };
 };
 
-const maskKey = (key) => {
-    if (!key || typeof key !== 'string') return '[invalid]';
-    return key.length > 6 ? `${key.slice(0, 3)}***${key.slice(-3)}` : '***';
-};
-
 const logRequest = (req, res, next) => {
-    const maskedKey = maskKey(req.params.key);
-    console.log(`REST ${req.method} ${req.originalUrl.replace(req.params.key, maskedKey)}`);
+    console.log(`REST ${req.method} ${req.originalUrl}`);
     console.log(`Data size: ${JSON.stringify(req.body).length} bytes`);
     console.log(`Time: ${new Date().toISOString()}`);
     console.log(`User-Agent: ${req.get('User-Agent')}`);
@@ -104,6 +98,11 @@ const asyncHandler = (fn) => (req, res, next) => {
     Promise.resolve(fn(req, res, next)).catch(next);
 };
 
+const injectApiKey = (req, res, next) => {
+    req.params.key = req.apiKey;
+    next();
+};
+
 router.get('/debug-test', 
     addCommonHeaders, 
     setCachePolicy('static'), 
@@ -115,57 +114,63 @@ router.get('/debug-test',
     }
 );
 
-router.post('/:key', 
+router.post('/', 
     addCommonHeaders,
     setCachePolicy('noCache'),
     logRequest, 
-    validateKey, 
+    validateKey,
+    injectApiKey,
     asyncHandler(async (req, res) => {
         await battleStatsController.updateStats(req, res);
     })
 );
 
-router.get('/:key', 
+router.get('/', 
     addCommonHeaders,
     setCachePolicy('dynamic'),
-    validateKey, 
+    validateKey,
+    injectApiKey,
     asyncHandler(async (req, res) => {
         await battleStatsController.getStats(req, res);
     })
 );
 
-router.get('/pid/:key', 
+router.get('/other-players', 
     addCommonHeaders,
     setCachePolicy('dynamic'),
-    validateKey, 
+    validateKey,
+    injectApiKey,
     asyncHandler(async (req, res) => {
         await battleStatsController.getOtherPlayersStats(req, res);
     })
 );
 
-router.post('/import/:key', 
+router.post('/import', 
     addCommonHeaders,
     setCachePolicy('noCache'),
     logRequest,
-    validateKey, 
+    validateKey,
+    injectApiKey,
     asyncHandler(async (req, res) => {
         await battleStatsController.importStats(req, res);
     })
 );
 
-router.get('/clear/:key', 
+router.delete('/clear', 
     addCommonHeaders,
     setCachePolicy('noCache'),
-    validateKey, 
+    validateKey,
+    injectApiKey,
     asyncHandler(async (req, res) => {
         await battleStatsController.clearStats(req, res);
     })
 );
 
-router.delete('/:key/:battleId', 
+router.delete('/battle/:battleId', 
     addCommonHeaders,
     setCachePolicy('noCache'),
-    validateKey, 
+    validateKey,
+    injectApiKey,
     asyncHandler(async (req, res) => {
         await battleStatsController.deleteBattle(req, res);
     })
@@ -203,12 +208,12 @@ router.get('/version',
             name: 'BattleStats API',
             description: 'API для збереження та отримання статистики боїв',
             endpoints: [
-                'POST /:key - Оновлення статистики',
-                'GET /:key - Отримання статистики',
-                'GET /pid/:key - Статистика інших гравців',
-                'POST /import/:key - Імпорт даних',
-                'GET /clear/:key - Очищення статистики',
-                'DELETE /:key/:battleId - Видалення бою',
+                'POST / - Оновлення статистики (API key в заголовку)',
+                'GET / - Отримання статистики',
+                'GET /other-players - Статистика інших гравців',
+                'POST /import - Імпорт даних',
+                'DELETE /clear - Очищення статистики',
+                'DELETE /battle/:battleId - Видалення бою',
                 'DELETE /clear-database - Очищення БД'
             ]
         }));

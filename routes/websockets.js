@@ -1,4 +1,4 @@
-const { validateKeySocket } = require('../middleware/auth');
+const { validateKeySocket, createSession, validateSession, cleanupSession, authenticateSocketMessage } = require('../middleware/auth');
 const battleStatsService = require('../services/battleStatsService');
 const queue = require('../config/queue');
 const metrics = require('../config/metrics');
@@ -75,8 +75,8 @@ class WebSocketHandler {
            return false;
        }
 
-       if (!data.key || !validateKeySocket(data.key)) {
-           this.sendError(callback, 403, 'Невалідний API ключ');
+       if (!authenticateSocketMessage(socket, data)) {
+           this.sendError(callback, 403, 'Помилка автентифікації');
            return false;
        }
 
@@ -336,19 +336,27 @@ class WebSocketHandler {
    }
 
    handleDisconnect(socket, reason) {
-       this.connectedClients.delete(socket.id);
+       const clientInfo = this.connectedClients.get(socket.id);
+       if (clientInfo) {
+           cleanupSession(socket.id, clientInfo.key, clientInfo.playerId);
+           this.connectedClients.delete(socket.id);
+       }
        console.log(`Клієнт відключився: ${socket.id}, причина: ${reason}`);
    }
 }
 
 function authenticateSocket(socket, next) {
    const key = socket.handshake.query.key || socket.handshake.auth?.key;
+   const playerId = socket.handshake.query.playerId || socket.handshake.auth?.playerId;
    
    if (!key || !validateKeySocket(key)) {
        return next(new Error('Невалідний API ключ'));
    }
    
+   const sessionId = createSession(socket.id, key, playerId);
    socket.authKey = key;
+   socket.sessionId = sessionId;
+   
    next();
 }
 
@@ -362,6 +370,7 @@ function initializeWebSocket(io) {
        
        socket.emit('connected', {
            socketId: socket.id,
+           sessionId: socket.sessionId,
            serverTime: Date.now(),
            message: 'Успішно підключено до BattleStats WebSocket'
        });
