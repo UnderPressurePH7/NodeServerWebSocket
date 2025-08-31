@@ -44,7 +44,23 @@ const server = http.createServer(app);
 const { Server } = require('socket.io');
 const port = process.env.PORT || 3000;
 
+const allowedOrigins = [
+    'https://underpressureph7.github.io'
+];
+
 const corsOptions = {
+    // origin: function (origin, callback) {
+    //     if (!origin || process.env.NODE_ENV !== 'production') {
+    //         return callback(null, true);
+    //     }
+        
+    //     if (allowedOrigins.includes(origin)) {
+    //         return callback(null, true);
+        
+    //     }
+
+    //     callback(new ValidationError(`Origin ${origin} not allowed by CORS policy`));
+    // },
     origin: true,
     methods: ['GET', 'POST', 'PUT', 'DELETE'],
     allowedHeaders: ['Content-Type', 'Authorization', 'X-Player-ID'],
