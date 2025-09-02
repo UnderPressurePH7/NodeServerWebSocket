@@ -2,6 +2,7 @@ const battleStatsRepository = require('../repositories/battleStatsRepository');
 const notificationService = require('./notificationService');
 const dataProcessor = require('./dataProcessor');
 const DataTransformer = require('../utils/dataTransformer');
+const Validators = require('../utils/validators');
 
 class BattleStatsService {
     setIo(io) {
@@ -36,9 +37,9 @@ class BattleStatsService {
 
             if (incomingBattleStats) {
                 for (const [arenaId, battleData] of Object.entries(incomingBattleStats)) {
-                    if (dataProcessor.validateBattleData(battleData)) {
+                    if (Validators.validateBattleData(battleData)) {
                         const battleSource = battleData._id || battleData;
-                        const sanitizedBattle = dataProcessor.sanitizeBattleFields(battleSource);
+                        const sanitizedBattle = Validators.sanitizeBattleFields(battleSource);
                          updates.$set[`BattleStats.${arenaId}.startTime`] = sanitizedBattle.startTime;
                          updates.$set[`BattleStats.${arenaId}.duration`] = sanitizedBattle.duration;
                          updates.$set[`BattleStats.${arenaId}.win`] = sanitizedBattle.win;
@@ -50,9 +51,9 @@ class BattleStatsService {
                                 if (actualPlayerData && typeof actualPlayerData === 'object') {
                                     updates.$set[`BattleStats.${arenaId}.players.${pId}`] = {
                                         name: actualPlayerData.name || 'Unknown Player',
-                                        damage: dataProcessor.parseValue(actualPlayerData.damage) || 0,
-                                        kills: dataProcessor.parseValue(actualPlayerData.kills || actualPlayerData.frags) || 0,
-                                        points: dataProcessor.parseValue(actualPlayerData.points) || 0,
+                                        damage: this.parseValue(actualPlayerData.damage) || 0,
+                                        kills: this.parseValue(actualPlayerData.kills || actualPlayerData.frags) || 0,
+                                        points: this.parseValue(actualPlayerData.points) || 0,
                                         vehicle: actualPlayerData.vehicle || 'Unknown Vehicle'
                                     };
                                 }
@@ -73,6 +74,16 @@ class BattleStatsService {
             console.error(`❌ Помилка при обробці даних для ключа ${key}:`, error);
             return false;
         }
+    }
+
+    parseValue(value) {
+        if (value && typeof value === 'object') {
+            if (value.$numberDouble) return parseFloat(value.$numberDouble);
+            if (value.$numberInt) return parseInt(value.$numberInt);
+            if (value.$numberLong) return parseInt(value.$numberLong);
+            return value;
+        }
+        return value;
     }
 
     async getStats(key, page, limit) {
@@ -150,7 +161,16 @@ class BattleStatsService {
             throw new Error('Невалідні дані для імпорту');
         }
 
-        let statsDoc = await battleStatsRepository.findOrCreate(key);
+        let statsDoc = await battleStatsRepository.findByKey(key);
+        if (!statsDoc) {
+            const BattleStats = require('../models/BattleStats');
+            statsDoc = new BattleStats({
+                _id: key,
+                BattleStats: new Map(),
+                PlayerInfo: new Map()
+            });
+        }
+
         const { PlayerInfo, BattleStats: importBattleStats } = importData;
 
         if (PlayerInfo && typeof PlayerInfo === 'object') {

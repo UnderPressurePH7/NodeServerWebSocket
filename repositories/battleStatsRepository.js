@@ -6,6 +6,18 @@ class BattleStatsRepository {
         return await BattleStats.findById(key);
     }
 
+    async findOrCreate(key) {
+        let statsDoc = await this.findByKey(key);
+        if (!statsDoc) {
+            statsDoc = new BattleStats({
+                _id: key,
+                BattleStats: new Map(),
+                PlayerInfo: new Map()
+            });
+        }
+        return statsDoc;
+    }
+
     async getPaginatedBattles(key, page = 1, limit = 10) {
         const skip = (page - 1) * limit;
 
