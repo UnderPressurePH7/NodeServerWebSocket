@@ -1,6 +1,6 @@
 const { validateKeySocket, validateSecretKeySocket, createSession, validateSession, cleanupSession, authenticateSocketMessage, redisClient } = require('../middleware/auth');
 const battleStatsService = require('../services/battleStatsService');
-const queue = require('../config/queue');
+const { queue, isQueueFull } = require('../config/queue');
 const metrics = require('../config/metrics');
 
 
@@ -112,6 +112,10 @@ class WebSocketHandler {
    async handleUpdateStats(socket, data, callback) {
        if (!await this.validateRequest(socket, data, callback, true)) {
            return;
+       }
+
+       if (isQueueFull()) {
+            return this.sendError(callback, 503, 'Сервер перевантажено, спробуйте пізніше');
        }
 
        try {

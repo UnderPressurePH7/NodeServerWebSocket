@@ -4,6 +4,7 @@ const concurrency = process.env.NODE_ENV === 'production' ? 50 : 20;
 const timeout = parseInt(process.env.QUEUE_TIMEOUT);
 const intervalCap = parseInt(process.env.QUEUE_INTERVAL_CAP);
 const interval = parseInt(process.env.QUEUE_INTERVAL);
+const maxQueueSize = 5000;
 
 const queue = new PQueue({
    concurrency,
@@ -13,6 +14,10 @@ const queue = new PQueue({
    interval,
    carryoverConcurrencyCount: false
 });
+
+const isQueueFull = () => {
+    return queue.size >= maxQueueSize;
+};
 
 const withRetry = async (task, maxRetries = 3, delay = 1000) => {
    let lastError;
@@ -94,5 +99,6 @@ module.exports = {
    queue,
    addWithRetry,
    addCritical,
-   gracefulShutdown
+   gracefulShutdown,
+   isQueueFull
 };

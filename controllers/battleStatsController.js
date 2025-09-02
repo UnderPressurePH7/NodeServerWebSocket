@@ -1,9 +1,16 @@
 const battleStatsService = require('../services/battleStatsService');
-const queue = require('../config/queue');
+const { queue, isQueueFull } = require('../config/queue');
 const metrics = require('../config/metrics');
 
 const battleStatsController = {
     updateStats: (req, res) => {
+        if (isQueueFull()) {
+            return res.status(503).json({
+                error: 'Service Unavailable',
+                message: 'Сервер перевантажено, спробуйте пізніше',
+            });
+        }
+
         const key = req.params.key;
         const playerId = req.headers['x-player-id'];
 
