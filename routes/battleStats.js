@@ -2,7 +2,7 @@ const express = require('express');
 const router = express.Router();
 const { validateSecretKey } = require('../middleware/auth');
 const battleStatsController = require('../controllers/battleStatsController');
-const { version } = require('../package.json');
+const { version, name } = require('../package.json');
 
 const API_VERSION = version;
 
@@ -53,6 +53,28 @@ const addServerHeaders = (req, res, next) => {
     next();
 };
 
+const validateApiKeyHeader = (req, res, next) => {
+    const VALID_KEYS = require('../config/validKey');
+    const apiKey = req.headers['x-api-key'];
+    
+    if (!apiKey) {
+        return res.status(400).json({
+            error: 'Bad Request',
+            message: 'Відсутній X-API-Key в заголовках запиту'
+        });
+    }
+    
+    if (!VALID_KEYS.includes(apiKey)) {
+        return res.status(401).json({
+            error: 'Unauthorized',
+            message: 'Невалідний API ключ'
+        });
+    }
+    
+    req.params.key = apiKey;
+    next();
+};
+
 const errorHandler = (error, req, res, next) => {
     console.error('Server-to-server error:', error);
     res.status(error.status || 500).json(createErrorResponse(error, req));
@@ -62,58 +84,58 @@ const asyncHandler = (fn) => (req, res, next) => {
     Promise.resolve(fn(req, res, next)).catch(next);
 };
 
-router.post('/update-stats/:gameKey',
+router.post('/update-stats',
     addServerHeaders,
     logServerRequest,
     validateSecretKey,
+    validateApiKeyHeader,
     asyncHandler(async (req, res) => {
-        req.params.key = req.params.gameKey;
         await battleStatsController.updateStats(req, res);
     })
 );
 
-router.get('/stats/:gameKey',
+router.get('/stats',
     addServerHeaders,
     validateSecretKey,
+    validateApiKeyHeader,
     asyncHandler(async (req, res) => {
-        req.params.key = req.params.gameKey;
         await battleStatsController.getStats(req, res);
     })
 );
 
-router.get('/other-players/:gameKey',
+router.get('/other-players',
     addServerHeaders,
     validateSecretKey,
+    validateApiKeyHeader,
     asyncHandler(async (req, res) => {
-        req.params.key = req.params.gameKey;
         await battleStatsController.getOtherPlayersStats(req, res);
     })
 );
 
-router.post('/import/:gameKey',
+router.post('/import',
     addServerHeaders,
     logServerRequest,
     validateSecretKey,
+    validateApiKeyHeader,
     asyncHandler(async (req, res) => {
-        req.params.key = req.params.gameKey;
         await battleStatsController.importStats(req, res);
     })
 );
 
-router.delete('/clear/:gameKey',
+router.delete('/clear',
     addServerHeaders,
     validateSecretKey,
+    validateApiKeyHeader,
     asyncHandler(async (req, res) => {
-        req.params.key = req.params.gameKey;
         await battleStatsController.clearStats(req, res);
     })
 );
 
-router.delete('/battle/:gameKey/:battleId',
+router.delete('/battle/:battleId',
     addServerHeaders,
     validateSecretKey,
+    validateApiKeyHeader,
     asyncHandler(async (req, res) => {
-        req.params.key = req.params.gameKey;
         await battleStatsController.deleteBattle(req, res);
     })
 );
@@ -146,16 +168,19 @@ router.get('/version',
     (req, res) => {
         res.status(200).json(createSuccessResponse({
             version: API_VERSION,
-            name: 'BattleStats Server-to-Server API',
+            name: name,
             description: 'Server-to-server API для статистики боїв',
+            authentication: 'X-Secret-Key та X-API-Key заголовки обов\'язкові',
             endpoints: [
-                'POST /update-stats/:gameKey - Оновлення статистики',
-                'GET /stats/:gameKey - Отримання статистики',
-                'GET /other-players/:gameKey - Статистика інших гравців',
-                'POST /import/:gameKey - Імпорт даних',
-                'DELETE /clear/:gameKey - Очищення статистики',
-                'DELETE /battle/:gameKey/:battleId - Видалення бою',
-                'DELETE /clear-database - Очищення БД'
+                'POST /update-stats - Оновлення статистики (X-Player-ID обов\'язковий)',
+                'GET /stats - Отримання статистики',
+                'GET /other-players - Статистика інших гравців (X-Player-ID обов\'язковий)',
+                'POST /import - Імпорт даних',
+                'DELETE /clear - Очищення статистики',
+                'DELETE /battle/:battleId - Видалення бою',
+                'DELETE /clear-database - Очищення БД',
+                'GET /health - Стан сервера (без автентифікації)',
+                'GET /version - Інформація про API (без автентифікації)'
             ]
         }));
     }
