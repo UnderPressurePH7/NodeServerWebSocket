@@ -12,7 +12,20 @@ class WebSocketHandler {
    constructor(io) {
        this.io = io;
        this.connectedClients = new Map();
+       setInterval(() => this.cleanupDeadClients(), 300000);
    }
+
+   cleanupDeadClients() {
+        if (!this.io) return;
+        const connectedSocketIds = new Set(Object.keys(this.io.sockets.sockets));
+        for (const socketId of this.connectedClients.keys()) {
+            if (!connectedSocketIds.has(socketId)) {
+                this.connectedClients.delete(socketId);
+                cleanupSession(socketId);
+                console.log(`Видалено мертвий клієнт: ${socketId}`);
+            }
+        }
+    }
 
    async checkRateLimit(socketId, key, playerId) {
         if (!redisClient.isOpen) return true;
@@ -373,10 +386,11 @@ async function authenticateSocket(socket, next) {
 function initializeWebSocket(io) {
    battleStatsService.setIo(io);
    
+   const wsHandler = new WebSocketHandler(io);
+   
    io.use(authenticateSocket);
    
    io.on('connection', (socket) => {
-       const wsHandler = new WebSocketHandler(io);
        
        socket.emit('connected', {
            socketId: socket.id,

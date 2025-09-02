@@ -29,6 +29,10 @@ class BattleStatsRepository {
         
         return await statsDoc.save();
     }
+    
+    async updateBattleStats(key, updates) {
+        return await BattleStats.updateOne({ _id: key }, updates, { upsert: true });
+    }
 
     async clearStats(key) {
         return await BattleStats.updateOne(

@@ -13,31 +13,59 @@ class BattleStatsService {
     async processDataAsync(key, playerId, requestData) {
         try {
             const { BattleStats: incomingBattleStats, PlayerInfo: incomingPlayerInfo } = requestData || {};
-
             if (!incomingBattleStats && !incomingPlayerInfo) {
                 return false;
             }
 
-            let statsDoc = await battleStatsRepository.findOrCreate(key);
-            
-            DataTransformer.ensureMapStructure(statsDoc);
-            
-            if (dataProcessor.cleanupBattleFields(statsDoc.BattleStats)) {
-                await battleStatsRepository.save(statsDoc);
-            }
-
+            const updates = { $set: {}, $unset: {} };
             let modified = false;
 
-            if (dataProcessor.processPlayerInfo(incomingPlayerInfo, statsDoc.PlayerInfo)) {
-                modified = true;
+            if (incomingPlayerInfo) {
+                 for (const [pid, pInfo] of Object.entries(incomingPlayerInfo)) {
+                    let playerData;
+                    if (typeof pInfo === 'string') {
+                        playerData = { _id: pInfo };
+                    } else if (pInfo && typeof pInfo === 'object' && pInfo._id) {
+                        playerData = { _id: pInfo._id };
+                    }
+                    if (playerData) {
+                        updates.$set[`PlayerInfo.${pid}`] = playerData;
+                        modified = true;
+                    }
+                }
             }
 
-            if (dataProcessor.processBattleStats(incomingBattleStats, statsDoc.BattleStats)) {
-                modified = true;
+            if (incomingBattleStats) {
+                for (const [arenaId, battleData] of Object.entries(incomingBattleStats)) {
+                    if (dataProcessor.validateBattleData(battleData)) {
+                        const battleSource = battleData._id || battleData;
+                        const sanitizedBattle = dataProcessor.sanitizeBattleFields(battleSource);
+                         updates.$set[`BattleStats.${arenaId}.startTime`] = sanitizedBattle.startTime;
+                         updates.$set[`BattleStats.${arenaId}.duration`] = sanitizedBattle.duration;
+                         updates.$set[`BattleStats.${arenaId}.win`] = sanitizedBattle.win;
+                         updates.$set[`BattleStats.${arenaId}.mapName`] = sanitizedBattle.mapName;
+
+                        if (battleSource.players) {
+                            for (const [pId, pData] of Object.entries(battleSource.players)) {
+                                const actualPlayerData = dataProcessor.extractPlayerData(pData);
+                                if (actualPlayerData && typeof actualPlayerData === 'object') {
+                                    updates.$set[`BattleStats.${arenaId}.players.${pId}`] = {
+                                        name: actualPlayerData.name || 'Unknown Player',
+                                        damage: dataProcessor.parseValue(actualPlayerData.damage) || 0,
+                                        kills: dataProcessor.parseValue(actualPlayerData.kills || actualPlayerData.frags) || 0,
+                                        points: dataProcessor.parseValue(actualPlayerData.points) || 0,
+                                        vehicle: actualPlayerData.vehicle || 'Unknown Vehicle'
+                                    };
+                                }
+                            }
+                        }
+                        modified = true;
+                    }
+                }
             }
-            
+
             if (modified) {
-                await battleStatsRepository.save(statsDoc);
+                await battleStatsRepository.updateBattleStats(key, updates);
                 notificationService.notifyStatsUpdated(key, playerId);
             }
 
