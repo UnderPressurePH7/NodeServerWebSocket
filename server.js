@@ -19,11 +19,12 @@ const { initializeWebSocket } = require('./routes/websockets');
 const { version } = require('./package.json');
 const { setRedisClient } = require('./middleware/auth');
 
-const numCPUs = os.cpus().length;
+const numCPUs = process.env.WEB_CONCURRENCY || 1;
 const port = process.env.PORT || 3000;
 
-if (cluster.isPrimary) {
+if (cluster.isPrimary && process.env.NODE_ENV === 'production') {
     console.log(`Головний процес ${process.pid} запущено`);
+    console.log(`Запускаємо ${numCPUs} робочих процесів...`);
 
     for (let i = 0; i < numCPUs; i++) {
         cluster.fork();
@@ -130,7 +131,7 @@ if (cluster.isPrimary) {
         console.log(`Socket.IO Redis adapter for worker ${process.pid} connected.`);
     }).catch(err => {
         console.error(`Failed to connect Redis adapter for worker ${process.pid}:`, err);
-        process.exit(1); 
+        process.exit(1);
     });
     
     server.setTimeout(30000);
