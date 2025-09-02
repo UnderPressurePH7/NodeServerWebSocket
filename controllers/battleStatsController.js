@@ -50,7 +50,7 @@ const battleStatsController = {
         try {
             const key = req.params.key;
             const page = parseInt(req.query.page) || 1;
-            const limit = parseInt(req.query.limit) || 10;
+            const limit = req.query.limit !== undefined ? parseInt(req.query.limit) : 10;
 
             const result = await battleStatsService.getStats(key, page, limit);
             

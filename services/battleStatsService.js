@@ -76,8 +76,13 @@ class BattleStatsService {
     }
 
     async getStats(key, page, limit) {
-        const results = await battleStatsRepository.getPaginatedBattles(key, page, limit);
-        const statsDoc = results[0];
+        let statsDoc;
+        if (limit === 0) {
+            statsDoc = await battleStatsRepository.findByKey(key);
+        } else {
+            const results = await battleStatsRepository.getPaginatedBattles(key, page, limit);
+            statsDoc = results[0];
+        }
 
         if (!statsDoc) {
             return {

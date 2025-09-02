@@ -172,7 +172,7 @@ class WebSocketHandler {
 
        try {
            const page = parseInt(data.page) || 1;
-           const limit = parseInt(data.limit) || 10;
+           const limit = data.limit !== undefined ? parseInt(data.limit) : 10;
            const result = await battleStatsService.getStats(data.key, page, limit);
            this.sendSuccess(callback, result);
        } catch (error) {
