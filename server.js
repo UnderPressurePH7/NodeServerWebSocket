@@ -53,7 +53,7 @@ const allowedOrigins = [
 const serverCorsOptions = {
     origin: true,
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'X-Player-ID', 'X-API-Key', 'X-Secret-Key'],
+    allowedHeaders: ['Content-Type', 'X-Player-ID', 'X-API-Key', 'X-Secret-Key'],
     credentials: true,
     maxAge: 86400,
     preflightContinue: false,
@@ -73,7 +73,7 @@ const httpCorsOptions = {
         callback(new ValidationError(`Origin ${origin} not allowed by CORS policy`));
     },
     methods: ['GET', 'POST', 'PUT', 'DELETE'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'X-Player-ID', 'X-API-Key'],
+    allowedHeaders: ['Content-Type', 'X-Player-ID', 'X-API-Key'],
     credentials: true,
     maxAge: 86400,
     preflightContinue: false,

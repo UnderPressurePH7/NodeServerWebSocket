@@ -16,13 +16,17 @@ const sessionCache = new LRUCache({
 const RATE_LIMIT_MAX = 600;
 const SESSION_TTL = 3600000;
 
-const extractApiKey = (req) => {
-    const authHeader = req.headers.authorization;
-    if (authHeader && authHeader.startsWith('Bearer ')) {
-        return authHeader.substring(7);
-    }
+// const extractApiKey = (req) => {
+//     const authHeader = req.headers.authorization;
+//     if (authHeader && authHeader.startsWith('Bearer ')) {
+//         return authHeader.substring(7);
+//     }
     
-    return req.headers['x-api-key'] || req.headers['x-auth-key'];
+//     return req.headers['x-api-key'] || req.headers['x-auth-key'];
+// };
+
+const extractApiKey = (req) => {
+    return req.headers['x-api-key'];
 };
 
 const extractSecretKey = (req) => {

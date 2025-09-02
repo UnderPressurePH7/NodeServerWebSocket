@@ -55,7 +55,8 @@ const addServerHeaders = (req, res, next) => {
 
 const validateApiKeyHeader = (req, res, next) => {
     const VALID_KEYS = require('../config/validKey');
-    const apiKey = req.headers['x-api-key'];
+    const apiKey = extractApiKey(req);
+    // const apiKey = req.headers['x-api-key'];
     
     if (!apiKey) {
         return res.status(400).json({
