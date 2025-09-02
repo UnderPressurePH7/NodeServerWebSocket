@@ -36,7 +36,7 @@ const createSuccessResponse = (data, meta = {}) => {
 };
 
 const logServerRequest = (req, res, next) => {
-    console.log(`SERVER-TO-SERVER ${req.method} ${req.originalUrl}`);
+    console.log(`CLIENT API ${req.method} ${req.originalUrl}`);
     console.log(`Data size: ${JSON.stringify(req.body).length} bytes`);
     console.log(`Time: ${new Date().toISOString()}`);
     console.log(`User-Agent: ${req.get('User-Agent')}`);
@@ -47,8 +47,8 @@ const logServerRequest = (req, res, next) => {
 const addServerHeaders = (req, res, next) => {
     res.set({
         'X-API-Version': API_VERSION,
-        'X-Powered-By': 'BattleStats-Server-API',
-        'X-Request-ID': req.id || `srv_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
+        'X-Powered-By': 'BattleStats-Client-API',
+        'X-Request-ID': req.id || `cli_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
     });
     next();
 };
@@ -76,7 +76,7 @@ const validateApiKeyHeader = (req, res, next) => {
 };
 
 const errorHandler = (error, req, res, next) => {
-    console.error('Server-to-server error:', error);
+    console.error('Client API error:', error);
     res.status(error.status || 500).json(createErrorResponse(error, req));
 };
 
@@ -87,7 +87,6 @@ const asyncHandler = (fn) => (req, res, next) => {
 router.post('/update-stats',
     addServerHeaders,
     logServerRequest,
-    validateSecretKey,
     validateApiKeyHeader,
     asyncHandler(async (req, res) => {
         await battleStatsController.updateStats(req, res);
@@ -96,7 +95,6 @@ router.post('/update-stats',
 
 router.get('/stats',
     addServerHeaders,
-    validateSecretKey,
     validateApiKeyHeader,
     asyncHandler(async (req, res) => {
         await battleStatsController.getStats(req, res);
@@ -105,7 +103,6 @@ router.get('/stats',
 
 router.get('/other-players',
     addServerHeaders,
-    validateSecretKey,
     validateApiKeyHeader,
     asyncHandler(async (req, res) => {
         await battleStatsController.getOtherPlayersStats(req, res);
@@ -115,7 +112,6 @@ router.get('/other-players',
 router.post('/import',
     addServerHeaders,
     logServerRequest,
-    validateSecretKey,
     validateApiKeyHeader,
     asyncHandler(async (req, res) => {
         await battleStatsController.importStats(req, res);
@@ -124,7 +120,6 @@ router.post('/import',
 
 router.delete('/clear',
     addServerHeaders,
-    validateSecretKey,
     validateApiKeyHeader,
     asyncHandler(async (req, res) => {
         await battleStatsController.clearStats(req, res);
@@ -133,7 +128,6 @@ router.delete('/clear',
 
 router.delete('/battle/:battleId',
     addServerHeaders,
-    validateSecretKey,
     validateApiKeyHeader,
     asyncHandler(async (req, res) => {
         await battleStatsController.deleteBattle(req, res);
@@ -153,7 +147,7 @@ router.get('/health',
     (req, res) => {
         res.status(200).json(createSuccessResponse({
             status: 'healthy',
-            type: 'server-to-server',
+            type: 'client-api',
             uptime: Math.floor(process.uptime()),
             memory: {
                 used: Math.round(process.memoryUsage().heapUsed / 1024 / 1024) + 'MB',
@@ -169,8 +163,8 @@ router.get('/version',
         res.status(200).json(createSuccessResponse({
             version: API_VERSION,
             name: name,
-            description: 'Server-to-server API для статистики боїв',
-            authentication: 'X-Secret-Key та X-API-Key заголовки обов\'язкові',
+            description: 'Client API для статистики боїв',
+            authentication: 'X-API-Key заголовок обов\'язковий',
             endpoints: [
                 'POST /update-stats - Оновлення статистики (X-Player-ID обов\'язковий)',
                 'GET /stats - Отримання статистики',
@@ -178,7 +172,7 @@ router.get('/version',
                 'POST /import - Імпорт даних',
                 'DELETE /clear - Очищення статистики',
                 'DELETE /battle/:battleId - Видалення бою',
-                'DELETE /clear-database - Очищення БД',
+                'DELETE /clear-database - Очищення БД (X-Secret-Key обов\'язковий)',
                 'GET /health - Стан сервера (без автентифікації)',
                 'GET /version - Інформація про API (без автентифікації)'
             ]
@@ -187,7 +181,7 @@ router.get('/version',
 );
 
 router.use('*', (req, res) => {
-    const error = new Error(`Server-to-server маршрут ${req.method} ${req.originalUrl} не знайдено`);
+    const error = new Error(`Client API маршрут ${req.method} ${req.originalUrl} не знайдено`);
     error.status = 404;
     res.status(404).json(createErrorResponse(error, req));
 });

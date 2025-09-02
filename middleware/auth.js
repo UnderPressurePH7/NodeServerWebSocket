@@ -13,7 +13,7 @@ const sessionCache = new LRUCache({
     ttl: 3600000
 });
 
-const RATE_LIMIT_MAX = 50;
+const RATE_LIMIT_MAX = 600;
 const SESSION_TTL = 3600000;
 
 const extractApiKey = (req) => {
