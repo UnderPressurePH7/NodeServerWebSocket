@@ -117,13 +117,15 @@ if (cluster.isPrimary) {
         pingInterval: 25000,
         allowEIO3: true
     });
-
-    const pubClient = createClient({ url: process.env.REDIS_URL });
+    
+    const pubClient = createClient({ url: process.env.REDISCLOUD_URL || process.env.REDIS_URL });
     const subClient = pubClient.duplicate();
 
     Promise.all([pubClient.connect(), subClient.connect()]).then(() => {
         io.adapter(createAdapter(pubClient, subClient));
         console.log(`Socket.IO Redis adapter for worker ${process.pid} connected.`);
+    }).catch(err => {
+        console.error(`Failed to connect Redis adapter for worker ${process.pid}:`, err);
     });
     
     server.setTimeout(30000);
