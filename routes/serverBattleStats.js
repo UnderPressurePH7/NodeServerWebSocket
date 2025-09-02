@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const { validateSecretKey } = require('../middleware/auth');
+const { validateKey, validateSecretKey } = require('../middleware/auth');
 const battleStatsController = require('../controllers/battleStatsController');
 const { version, name } = require('../package.json');
 
@@ -53,6 +53,11 @@ const addServerHeaders = (req, res, next) => {
     next();
 };
 
+const extractKeyFromRequest = (req, res, next) => {
+    req.params.key = req.apiKey;
+    next();
+};
+
 const errorHandler = (error, req, res, next) => {
     console.error('Server-to-server error:', error);
     res.status(error.status || 500).json(createErrorResponse(error, req));
@@ -62,33 +67,12 @@ const asyncHandler = (fn) => (req, res, next) => {
     Promise.resolve(fn(req, res, next)).catch(next);
 };
 
-const validateApiKeyHeader = (req, res, next) => {
-    const VALID_KEYS = require('../config/validKey');
-    const apiKey = req.headers['x-api-key'];
-    
-    if (!apiKey) {
-        return res.status(400).json({
-            error: 'Bad Request',
-            message: 'Відсутній X-API-Key в заголовках запиту'
-        });
-    }
-    
-    if (!VALID_KEYS.includes(apiKey)) {
-        return res.status(400).json({
-            error: 'Bad Request',
-            message: 'Невалідний API ключ'
-        });
-    }
-    
-    req.params.key = apiKey;
-    next();
-};
-
 router.post('/update-stats',
     addServerHeaders,
     logServerRequest,
     validateSecretKey,
-    validateApiKeyHeader,
+    validateKey,
+    extractKeyFromRequest,
     asyncHandler(async (req, res) => {
         await battleStatsController.updateStats(req, res);
     })
@@ -97,7 +81,8 @@ router.post('/update-stats',
 router.get('/stats',
     addServerHeaders,
     validateSecretKey,
-    validateApiKeyHeader,
+    validateKey,
+    extractKeyFromRequest,
     asyncHandler(async (req, res) => {
         await battleStatsController.getStats(req, res);
     })
@@ -106,7 +91,8 @@ router.get('/stats',
 router.get('/other-players',
     addServerHeaders,
     validateSecretKey,
-    validateApiKeyHeader,
+    validateKey,
+    extractKeyFromRequest,
     asyncHandler(async (req, res) => {
         await battleStatsController.getOtherPlayersStats(req, res);
     })
@@ -116,7 +102,8 @@ router.post('/import',
     addServerHeaders,
     logServerRequest,
     validateSecretKey,
-    validateApiKeyHeader,
+    validateKey,
+    extractKeyFromRequest,
     asyncHandler(async (req, res) => {
         await battleStatsController.importStats(req, res);
     })
@@ -125,7 +112,8 @@ router.post('/import',
 router.delete('/clear',
     addServerHeaders,
     validateSecretKey,
-    validateApiKeyHeader,
+    validateKey,
+    extractKeyFromRequest,
     asyncHandler(async (req, res) => {
         await battleStatsController.clearStats(req, res);
     })
@@ -134,7 +122,8 @@ router.delete('/clear',
 router.delete('/battle/:battleId',
     addServerHeaders,
     validateSecretKey,
-    validateApiKeyHeader,
+    validateKey,
+    extractKeyFromRequest,
     asyncHandler(async (req, res) => {
         await battleStatsController.deleteBattle(req, res);
     })
