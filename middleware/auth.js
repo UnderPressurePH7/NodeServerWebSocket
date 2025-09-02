@@ -2,7 +2,7 @@ const VALID_KEYS = require('../config/validKey');
 const { createClient } = require('redis');
 
 const SECRET_KEY = process.env.SECRET_KEY;
-const REDIS_URL = process.env.REDIS_URL;
+const REDIS_URL = process.env.REDISCLOUD_URL || process.env.REDIS_URL;
 
 const redisClient = createClient({ url: REDIS_URL });
 redisClient.on('error', (err) => console.error('Redis Client Error', err));
