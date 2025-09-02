@@ -1,3 +1,5 @@
+require("@scout_apm/scout-apm");
+
 const express = require('express');
 const cors = require('cors');
 const http = require('http');
