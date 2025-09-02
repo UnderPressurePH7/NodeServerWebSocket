@@ -6,12 +6,34 @@ class BattleStatsRepository {
         return await BattleStats.findById(key);
     }
 
-    async findOrCreate(key) {
-        return await BattleStats.findOneAndUpdate(
-            { _id: key },
-            { $setOnInsert: { _id: key, BattleStats: new Map(), PlayerInfo: new Map() } },
-            { upsert: true, new: true, runValidators: true }
-        );
+    async getPaginatedBattles(key, page = 1, limit = 10) {
+        const skip = (page - 1) * limit;
+
+        return await BattleStats.aggregate([
+            { $match: { _id: key } },
+            { $project: {
+                PlayerInfo: 1,
+                battles: { $objectToArray: "$BattleStats" }
+            }},
+            { $unwind: "$battles" },
+            { $sort: { "battles.v.startTime": -1 } },
+            { $skip: skip },
+            { $limit: limit },
+            { $group: {
+                _id: "$_id",
+                PlayerInfo: { $first: "$PlayerInfo" },
+                BattleStats: { $push: "$battles" }
+            }},
+            { $project: {
+                _id: 1,
+                PlayerInfo: 1,
+                BattleStats: { $arrayToObject: "$BattleStats" }
+            }}
+        ]);
+    }
+
+    async updateBattleStats(key, updates) {
+        return await BattleStats.updateOne({ _id: key }, updates, { upsert: true });
     }
 
     async save(statsDoc) {
@@ -28,10 +50,6 @@ class BattleStatsRepository {
         }
         
         return await statsDoc.save();
-    }
-    
-    async updateBattleStats(key, updates) {
-        return await BattleStats.updateOne({ _id: key }, updates, { upsert: true });
     }
 
     async clearStats(key) {

@@ -49,7 +49,10 @@ const battleStatsController = {
     getStats: async (req, res) => {
         try {
             const key = req.params.key;
-            const result = await battleStatsService.getStats(key);
+            const page = parseInt(req.query.page) || 1;
+            const limit = parseInt(req.query.limit) || 10;
+
+            const result = await battleStatsService.getStats(key, page, limit);
             
             res.status(200).json(result);
         } catch (error) {

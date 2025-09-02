@@ -3,7 +3,6 @@ const notificationService = require('./notificationService');
 const dataProcessor = require('./dataProcessor');
 const DataTransformer = require('../utils/dataTransformer');
 
-
 class BattleStatsService {
     setIo(io) {
         notificationService.setIo(io);
@@ -76,8 +75,9 @@ class BattleStatsService {
         }
     }
 
-    async getStats(key) {
-        const statsDoc = await battleStatsRepository.findByKey(key);
+    async getStats(key, page, limit) {
+        const results = await battleStatsRepository.getPaginatedBattles(key, page, limit);
+        const statsDoc = results[0];
 
         if (!statsDoc) {
             return {
@@ -86,7 +86,7 @@ class BattleStatsService {
                 PlayerInfo: {}
             };
         }
-
+        
         DataTransformer.ensureMapStructure(statsDoc);
         const { cleanBattleStats, cleanPlayerInfo } = DataTransformer.convertMapsToObjects(statsDoc);
 
