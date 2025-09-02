@@ -50,6 +50,16 @@ const allowedOrigins = [
     'https://underpressureph7.github.io'
 ];
 
+const serverCorsOptions = {
+    origin: true,
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-Player-ID', 'X-Secret-Key'],
+    credentials: true,
+    maxAge: 86400,
+    preflightContinue: false,
+    optionsSuccessStatus: 204
+};
+
 const httpCorsOptions = {
     origin: function (origin, callback) {
         if (process.env.NODE_ENV !== 'production') {
@@ -246,7 +256,7 @@ app.get('/api/queue-status', (req, res) => {
     });
 });
 
-app.use('/api/server', serverBattleStatsRoutes);
+app.use('/api/server', cors(serverCorsOptions), serverBattleStatsRoutes);
 
 app.use(cors(httpCorsOptions));
 
