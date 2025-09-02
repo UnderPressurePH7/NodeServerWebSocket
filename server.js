@@ -6,9 +6,11 @@ const compression = require('compression');
 const helmet = require('helmet');
 const connectDB = require('./config/database');
 const battleStatsRoutes = require('./routes/battleStats');
+const serverBattleStatsRoutes = require('./routes/serverBattleStats');
 const queue = require('./config/queue');
 const metrics = require('./config/metrics');
 const { initializeWebSocket } = require('./routes/websockets');
+const { version } = require('./package.json');
 
 class AppError extends Error {
     constructor(message, statusCode, code = null) {
@@ -42,26 +44,24 @@ class ServerError extends AppError {
 const app = express();
 const server = http.createServer(app);
 const { Server } = require('socket.io');
-const port = process.env.PORT || 3000;
+const port = parseInt(process.env.PORT);
 
 const allowedOrigins = [
     'https://underpressureph7.github.io'
 ];
 
-const corsOptions = {
-    // origin: function (origin, callback) {
-    //     if (!origin || process.env.NODE_ENV !== 'production') {
-    //         return callback(null, true);
-    //     }
+const httpCorsOptions = {
+    origin: function (origin, callback) {
+        if (process.env.NODE_ENV !== 'production') {
+            return callback(null, true);
+        }
         
-    //     if (allowedOrigins.includes(origin)) {
-    //         return callback(null, true);
+        if (!origin || allowedOrigins.includes(origin)) {
+            return callback(null, true);
+        }
         
-    //     }
-
-    //     callback(new ValidationError(`Origin ${origin} not allowed by CORS policy`));
-    // },
-    origin: true,
+        callback(new ValidationError(`Origin ${origin} not allowed by CORS policy`));
+    },
     methods: ['GET', 'POST', 'PUT', 'DELETE'],
     allowedHeaders: ['Content-Type', 'Authorization', 'X-Player-ID'],
     credentials: true,
@@ -70,8 +70,28 @@ const corsOptions = {
     optionsSuccessStatus: 204
 };
 
+const socketCorsOptions = {
+    origin: function (origin, callback) {
+        if (!origin) {
+            return callback(null, true);
+        }
+        
+        if (process.env.NODE_ENV !== 'production') {
+            return callback(null, true);
+        }
+        
+        if (allowedOrigins.includes(origin)) {
+            return callback(null, true);
+        }
+        
+        callback(new Error(`WebSocket origin ${origin} not allowed`));
+    },
+    methods: ['GET', 'POST'],
+    credentials: true
+};
+
 const io = new Server(server, {
-    cors: corsOptions,
+    cors: socketCorsOptions,
     transports: ['websocket', 'polling'],
     pingTimeout: 60000,
     pingInterval: 25000,
@@ -88,8 +108,6 @@ app.disable('x-powered-by');
 app.use(helmet({ 
     contentSecurityPolicy: false 
 }));
-
-app.use(cors(corsOptions));
 
 app.use(compression({ 
     level: process.env.NODE_ENV === 'production' ? 9 : 1, 
@@ -159,8 +177,8 @@ app.get('/', (req, res) => {
     res.set('Cache-Control', 'public, max-age=300');
     sendSuccessResponse(res, {
         message: 'Сервер працює!',
-        version: '1.0.0',
-        environment: process.env.NODE_ENV || 'development'
+        version: version,
+        environment: process.env.NODE_ENV
     });
 });
 
@@ -171,8 +189,8 @@ app.get('/api/status', async (req, res) => {
         let staticData = statusCache.static.data;
         if (!staticData || (now - statusCache.static.timestamp) > statusCache.static.ttl) {
             staticData = {
-                version: '1.0.0',
-                environment: process.env.NODE_ENV || 'development',
+                version: version,
+                environment: process.env.NODE_ENV,
                 nodeVersion: process.version,
                 platform: process.platform
             };
@@ -227,6 +245,10 @@ app.get('/api/queue-status', (req, res) => {
         }
     });
 });
+
+app.use('/api/server', serverBattleStatsRoutes);
+
+app.use(cors(httpCorsOptions));
 
 app.use('/api/battle-stats', battleStatsRoutes);
 

@@ -1,4 +1,4 @@
-const { validateKeySocket, createSession, validateSession, cleanupSession, authenticateSocketMessage } = require('../middleware/auth');
+const { validateKeySocket, validateSecretKeySocket, createSession, validateSession, cleanupSession, authenticateSocketMessage } = require('../middleware/auth');
 const battleStatsService = require('../services/battleStatsService');
 const queue = require('../config/queue');
 const metrics = require('../config/metrics');
@@ -80,6 +80,11 @@ class WebSocketHandler {
            return false;
        }
 
+       if (socket.authType === 'secret_key' && !data.key) {
+           this.sendError(callback, 400, 'Відсутній API ключ для server-to-server запиту');
+           return false;
+       }
+
        if (requiresPlayerId && !data.playerId) {
            this.sendError(callback, 400, 'Відсутній ID гравця');
            return false;
@@ -90,7 +95,8 @@ class WebSocketHandler {
            return false;
        }
 
-       if (!this.checkRateLimit(socket.id, data.key, data.playerId)) {
+       const keyForRateLimit = socket.authType === 'secret_key' ? data.secretKey : data.key;
+       if (!this.checkRateLimit(socket.id, keyForRateLimit, data.playerId)) {
            this.sendError(callback, 429, 'Перевищено ліміт запитів');
            return false;
        }
@@ -111,18 +117,20 @@ class WebSocketHandler {
                queueSize: queue.size
            }, 202);
 
+           const roomKey = socket.authType === 'secret_key' ? data.gameKey || data.key : data.key;
+
            await queue.add(async () => {
                try {
                    const result = await battleStatsService.processDataAsync(
-                       data.key, 
+                       roomKey, 
                        data.playerId, 
                        data.body || data
                    );
 
                    if (result) {
                        metrics.successfulRequests++;
-                       this.io.to(`stats_${data.key}`).emit('statsUpdated', {
-                           key: data.key,
+                       this.io.to(`stats_${roomKey}`).emit('statsUpdated', {
+                           key: roomKey,
                            playerId: data.playerId,
                            timestamp: Date.now()
                        });
@@ -289,11 +297,12 @@ class WebSocketHandler {
            return;
        }
 
-       const roomName = `stats_${data.key}`;
+       const roomKey = data.key;
+       const roomName = `stats_${roomKey}`;
        socket.join(roomName);
        
        this.connectedClients.set(socket.id, {
-           key: data.key,
+           key: roomKey,
            playerId: data.playerId,
            room: roomName,
            connectedAt: Date.now()
@@ -347,17 +356,26 @@ class WebSocketHandler {
 
 function authenticateSocket(socket, next) {
    const key = socket.handshake.query.key || socket.handshake.auth?.key;
+   const secretKey = socket.handshake.query.secretKey || socket.handshake.auth?.secretKey;
    const playerId = socket.handshake.query.playerId || socket.handshake.auth?.playerId;
    
-   if (!key || !validateKeySocket(key)) {
-       return next(new Error('Невалідний API ключ'));
+   if (key && validateKeySocket(key)) {
+       const sessionId = createSession(socket.id, key, playerId);
+       socket.authKey = key;
+       socket.sessionId = sessionId;
+       socket.authType = 'api_key';
+       return next();
    }
    
-   const sessionId = createSession(socket.id, key, playerId);
-   socket.authKey = key;
-   socket.sessionId = sessionId;
+   if (secretKey && validateSecretKeySocket(secretKey)) {
+       const sessionId = createSession(socket.id, secretKey, playerId);
+       socket.authKey = secretKey;
+       socket.sessionId = sessionId;
+       socket.authType = 'secret_key';
+       return next();
+   }
    
-   next();
+   return next(new Error('Невалідний API ключ або секретний ключ'));
 }
 
 function initializeWebSocket(io) {
@@ -371,6 +389,7 @@ function initializeWebSocket(io) {
        socket.emit('connected', {
            socketId: socket.id,
            sessionId: socket.sessionId,
+           authType: socket.authType,
            serverTime: Date.now(),
            message: 'Успішно підключено до BattleStats WebSocket'
        });
@@ -425,7 +444,8 @@ function initializeWebSocket(io) {
                success: true,
                message: 'pong',
                serverTime: Date.now(),
-               clientId: socket.id
+               clientId: socket.id,
+               authType: socket.authType
            };
            
            if (typeof callback === 'function') {

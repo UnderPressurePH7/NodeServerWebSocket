@@ -1,6 +1,6 @@
 const mongoose = require('mongoose');
 
-const MONGODB_URI = 'mongodb+srv://mrfilthyvv:SUJlDOMr4qP2zOIm@underdb.oyw0ym2.mongodb.net/battlestats?retryWrites=true&w=majority&appName=underDB';
+const MONGODB_URI = process.env.MONGODB_URI;
 
 const MAX_RETRIES = 5;
 const RETRY_DELAY = 5000;

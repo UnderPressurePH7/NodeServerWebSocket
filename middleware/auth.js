@@ -1,6 +1,8 @@
 const VALID_KEYS = require('../config/validKey');
 const { LRUCache } = require('lru-cache');
 
+const SECRET_KEY = process.env.SECRET_KEY;
+
 const rateLimitCache = new LRUCache({
     max: 10000,
     ttl: 300000
@@ -21,6 +23,10 @@ const extractApiKey = (req) => {
     }
     
     return req.headers['x-api-key'] || req.headers['x-auth-key'];
+};
+
+const extractSecretKey = (req) => {
+    return req.headers['x-secret-key'];
 };
 
 const checkRateLimit = (key, identifier) => {
@@ -64,8 +70,41 @@ const validateKey = (req, res, next) => {
     next();
 };
 
+const validateSecretKey = (req, res, next) => {
+    const secretKey = extractSecretKey(req);
+    const clientIp = req.ip || req.connection.remoteAddress || 'unknown';
+    
+    if (!secretKey) {
+        return res.status(401).json({
+            error: 'Unauthorized',
+            message: 'Відсутній X-Secret-Key в заголовках запиту',
+        });
+    }
+
+    if (!checkRateLimit(secretKey, clientIp)) {
+        return res.status(429).json({
+            error: 'Too Many Requests',
+            message: 'Перевищено ліміт спроб автентифікації',
+        });
+    }
+    
+    if (secretKey !== SECRET_KEY) {
+        return res.status(401).json({
+            error: 'Unauthorized',
+            message: 'Невірний секретний ключ',
+        });
+    }
+    
+    req.secretKey = secretKey;
+    next();
+};
+
 const validateKeySocket = (key) => {
     return key && VALID_KEYS.includes(key);
+};
+
+const validateSecretKeySocket = (secretKey) => {
+    return secretKey && secretKey === SECRET_KEY;
 };
 
 const createSession = (socketId, key, playerId) => {
@@ -105,27 +144,36 @@ const cleanupSession = (socketId, key, playerId) => {
 };
 
 const authenticateSocketMessage = (socket, data) => {
-    if (!data || !data.key) {
+    if (!data || typeof data !== 'object') {
         return false;
     }
     
-    if (!validateKeySocket(data.key)) {
+    if (socket.authType === 'secret_key') {
+        if (!data.secretKey || data.secretKey !== SECRET_KEY) {
+            return false;
+        }
+        if (!data.key || !VALID_KEYS.includes(data.key)) {
+            return false;
+        }
+        return validateSession(socket.id, socket.authKey, data.playerId);
+    }
+    
+    if (!data.key || !validateKeySocket(data.key)) {
         return false;
     }
     
-    if (!validateSession(socket.id, data.key, data.playerId)) {
-        return false;
-    }
-    
-    return true;
+    return validateSession(socket.id, data.key, data.playerId);
 };
 
 module.exports = {
     validateKey,
     validateKeySocket,
+    validateSecretKey,
+    validateSecretKeySocket,
     createSession,
     validateSession,
     cleanupSession,
     authenticateSocketMessage,
-    extractApiKey
+    extractApiKey,
+    extractSecretKey
 };

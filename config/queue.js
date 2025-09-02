@@ -1,9 +1,9 @@
 const PQueue = require('p-queue').default;
 
 const concurrency = process.env.NODE_ENV === 'production' ? 50 : 20;
-const timeout = parseInt(process.env.QUEUE_TIMEOUT) || 15000;
-const intervalCap = parseInt(process.env.QUEUE_INTERVAL_CAP) || 100;
-const interval = parseInt(process.env.QUEUE_INTERVAL) || 1000;
+const timeout = parseInt(process.env.QUEUE_TIMEOUT);
+const intervalCap = parseInt(process.env.QUEUE_INTERVAL_CAP);
+const interval = parseInt(process.env.QUEUE_INTERVAL);
 
 const queue = new PQueue({
    concurrency,

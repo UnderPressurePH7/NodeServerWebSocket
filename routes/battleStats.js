@@ -1,26 +1,10 @@
 const express = require('express');
 const router = express.Router();
-const { validateKey } = require('../middleware/auth');
+const { validateSecretKey } = require('../middleware/auth');
 const battleStatsController = require('../controllers/battleStatsController');
 const { version } = require('../package.json');
 
 const API_VERSION = version;
-
-const CACHE_POLICIES = {
-    static: 'public, max-age=300',
-    dynamic: 'public, max-age=5',
-    noCache: 'no-cache, no-store, must-revalidate',
-    shortLived: 'public, max-age=2'
-};
-
-class APIError extends Error {
-    constructor(message, status = 500, code = null) {
-        super(message);
-        this.name = 'APIError';
-        this.status = status;
-        this.code = code;
-    }
-}
 
 const createErrorResponse = (error, req) => {
     const response = {
@@ -51,8 +35,8 @@ const createSuccessResponse = (data, meta = {}) => {
     };
 };
 
-const logRequest = (req, res, next) => {
-    console.log(`REST ${req.method} ${req.originalUrl}`);
+const logServerRequest = (req, res, next) => {
+    console.log(`SERVER-TO-SERVER ${req.method} ${req.originalUrl}`);
     console.log(`Data size: ${JSON.stringify(req.body).length} bytes`);
     console.log(`Time: ${new Date().toISOString()}`);
     console.log(`User-Agent: ${req.get('User-Agent')}`);
@@ -60,136 +44,94 @@ const logRequest = (req, res, next) => {
     next();
 };
 
-const setCachePolicy = (policy) => (req, res, next) => {
-    res.set('Cache-Control', CACHE_POLICIES[policy] || CACHE_POLICIES.noCache);
-    next();
-};
-
-const addCommonHeaders = (req, res, next) => {
+const addServerHeaders = (req, res, next) => {
     res.set({
         'X-API-Version': API_VERSION,
-        'X-Powered-By': 'BattleStats-API',
-        'X-Request-ID': req.id || `req_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
+        'X-Powered-By': 'BattleStats-Server-API',
+        'X-Request-ID': req.id || `srv_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
     });
     next();
 };
 
 const errorHandler = (error, req, res, next) => {
-    if (error instanceof APIError) {
-        return res.status(error.status).json(createErrorResponse(error, req));
-    }
-
-    if (error.name === 'ValidationError') {
-        const apiError = new APIError('Помилка валідації даних', 400, 'VALIDATION_ERROR');
-        return res.status(400).json(createErrorResponse(apiError, req));
-    }
-
-    if (error.name === 'CastError') {
-        const apiError = new APIError('Невірний формат даних', 400, 'CAST_ERROR');
-        return res.status(400).json(createErrorResponse(apiError, req));
-    }
-
-    console.error('Unhandled error:', error);
-    const apiError = new APIError('Внутрішня помилка сервера', 500, 'INTERNAL_ERROR');
-    res.status(500).json(createErrorResponse(apiError, req));
+    console.error('Server-to-server error:', error);
+    res.status(error.status || 500).json(createErrorResponse(error, req));
 };
 
 const asyncHandler = (fn) => (req, res, next) => {
     Promise.resolve(fn(req, res, next)).catch(next);
 };
 
-const injectApiKey = (req, res, next) => {
-    req.params.key = req.apiKey;
-    next();
-};
-
-router.get('/debug-test', 
-    addCommonHeaders, 
-    setCachePolicy('static'), 
-    (req, res) => {
-        res.json(createSuccessResponse({
-            message: 'Battle stats API працює!',
-            environment: process.env.NODE_ENV || 'development'
-        }));
-    }
-);
-
-router.post('/', 
-    addCommonHeaders,
-    setCachePolicy('noCache'),
-    logRequest, 
-    validateKey,
-    injectApiKey,
+router.post('/update-stats/:gameKey',
+    addServerHeaders,
+    logServerRequest,
+    validateSecretKey,
     asyncHandler(async (req, res) => {
+        req.params.key = req.params.gameKey;
         await battleStatsController.updateStats(req, res);
     })
 );
 
-router.get('/', 
-    addCommonHeaders,
-    setCachePolicy('dynamic'),
-    validateKey,
-    injectApiKey,
+router.get('/stats/:gameKey',
+    addServerHeaders,
+    validateSecretKey,
     asyncHandler(async (req, res) => {
+        req.params.key = req.params.gameKey;
         await battleStatsController.getStats(req, res);
     })
 );
 
-router.get('/other-players', 
-    addCommonHeaders,
-    setCachePolicy('dynamic'),
-    validateKey,
-    injectApiKey,
+router.get('/other-players/:gameKey',
+    addServerHeaders,
+    validateSecretKey,
     asyncHandler(async (req, res) => {
+        req.params.key = req.params.gameKey;
         await battleStatsController.getOtherPlayersStats(req, res);
     })
 );
 
-router.post('/import', 
-    addCommonHeaders,
-    setCachePolicy('noCache'),
-    logRequest,
-    validateKey,
-    injectApiKey,
+router.post('/import/:gameKey',
+    addServerHeaders,
+    logServerRequest,
+    validateSecretKey,
     asyncHandler(async (req, res) => {
+        req.params.key = req.params.gameKey;
         await battleStatsController.importStats(req, res);
     })
 );
 
-router.delete('/clear', 
-    addCommonHeaders,
-    setCachePolicy('noCache'),
-    validateKey,
-    injectApiKey,
+router.delete('/clear/:gameKey',
+    addServerHeaders,
+    validateSecretKey,
     asyncHandler(async (req, res) => {
+        req.params.key = req.params.gameKey;
         await battleStatsController.clearStats(req, res);
     })
 );
 
-router.delete('/battle/:battleId', 
-    addCommonHeaders,
-    setCachePolicy('noCache'),
-    validateKey,
-    injectApiKey,
+router.delete('/battle/:gameKey/:battleId',
+    addServerHeaders,
+    validateSecretKey,
     asyncHandler(async (req, res) => {
+        req.params.key = req.params.gameKey;
         await battleStatsController.deleteBattle(req, res);
     })
 );
 
-router.delete('/clear-database', 
-    addCommonHeaders,
-    setCachePolicy('noCache'),
+router.delete('/clear-database',
+    addServerHeaders,
+    validateSecretKey,
     asyncHandler(async (req, res) => {
         await battleStatsController.clearDatabase(req, res);
     })
 );
 
-router.get('/health', 
-    addCommonHeaders, 
-    setCachePolicy('shortLived'), 
+router.get('/health',
+    addServerHeaders,
     (req, res) => {
         res.status(200).json(createSuccessResponse({
             status: 'healthy',
+            type: 'server-to-server',
             uptime: Math.floor(process.uptime()),
             memory: {
                 used: Math.round(process.memoryUsage().heapUsed / 1024 / 1024) + 'MB',
@@ -199,21 +141,20 @@ router.get('/health',
     }
 );
 
-router.get('/version', 
-    addCommonHeaders, 
-    setCachePolicy('static'), 
+router.get('/version',
+    addServerHeaders,
     (req, res) => {
         res.status(200).json(createSuccessResponse({
             version: API_VERSION,
-            name: 'BattleStats API',
-            description: 'API для збереження та отримання статистики боїв',
+            name: 'BattleStats Server-to-Server API',
+            description: 'Server-to-server API для статистики боїв',
             endpoints: [
-                'POST / - Оновлення статистики (API key в заголовку)',
-                'GET / - Отримання статистики',
-                'GET /other-players - Статистика інших гравців',
-                'POST /import - Імпорт даних',
-                'DELETE /clear - Очищення статистики',
-                'DELETE /battle/:battleId - Видалення бою',
+                'POST /update-stats/:gameKey - Оновлення статистики',
+                'GET /stats/:gameKey - Отримання статистики',
+                'GET /other-players/:gameKey - Статистика інших гравців',
+                'POST /import/:gameKey - Імпорт даних',
+                'DELETE /clear/:gameKey - Очищення статистики',
+                'DELETE /battle/:gameKey/:battleId - Видалення бою',
                 'DELETE /clear-database - Очищення БД'
             ]
         }));
@@ -221,7 +162,8 @@ router.get('/version',
 );
 
 router.use('*', (req, res) => {
-    const error = new APIError(`Маршрут ${req.method} ${req.originalUrl} не знайдено`, 404, 'ROUTE_NOT_FOUND');
+    const error = new Error(`Server-to-server маршрут ${req.method} ${req.originalUrl} не знайдено`);
+    error.status = 404;
     res.status(404).json(createErrorResponse(error, req));
 });
 
