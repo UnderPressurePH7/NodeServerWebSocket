@@ -1,29 +1,17 @@
 const VALID_KEYS = require('../config/validKey');
-const { LRUCache } = require('lru-cache');
+const { createClient } = require('redis');
 
 const SECRET_KEY = process.env.SECRET_KEY;
+const REDIS_URL = process.env.REDIS_URL;
 
-const rateLimitCache = new LRUCache({
-    max: 10000,
-    ttl: 300000
-});
+const redisClient = createClient({ url: REDIS_URL });
+redisClient.on('error', (err) => console.error('Redis Client Error', err));
+(async () => await redisClient.connect())();
 
-const sessionCache = new LRUCache({
-    max: 5000,
-    ttl: 3600000
-});
 
 const RATE_LIMIT_MAX = 600;
-const SESSION_TTL = 3600000;
-
-// const extractApiKey = (req) => {
-//     const authHeader = req.headers.authorization;
-//     if (authHeader && authHeader.startsWith('Bearer ')) {
-//         return authHeader.substring(7);
-//     }
-    
-//     return req.headers['x-api-key'] || req.headers['x-auth-key'];
-// };
+const RATE_LIMIT_TTL = 300; // 5 minutes
+const SESSION_TTL = 3600; // 1 hour
 
 const extractApiKey = (req) => {
     return req.headers['x-api-key'];
@@ -33,19 +21,19 @@ const extractSecretKey = (req) => {
     return req.headers['x-secret-key'];
 };
 
-const checkRateLimit = (key, identifier) => {
-    const rateLimitKey = `${key}:${identifier}`;
-    const attempts = rateLimitCache.get(rateLimitKey) || 0;
+const checkRateLimit = async (key, identifier) => {
+    if (!redisClient.isOpen) return true;
+    const rateLimitKey = `rate-limit:${key}:${identifier}`;
+    const attempts = await redisClient.incr(rateLimitKey);
     
-    if (attempts >= RATE_LIMIT_MAX) {
-        return false;
+    if (attempts === 1) {
+        await redisClient.expire(rateLimitKey, RATE_LIMIT_TTL);
     }
     
-    rateLimitCache.set(rateLimitKey, attempts + 1);
-    return true;
+    return attempts <= RATE_LIMIT_MAX;
 };
 
-const validateKey = (req, res, next) => {
+const validateKey = async (req, res, next) => {
     const key = extractApiKey(req);
     const clientIp = req.ip || req.connection.remoteAddress || 'unknown';
     
@@ -56,7 +44,7 @@ const validateKey = (req, res, next) => {
         });
     }
 
-    if (!checkRateLimit(key, clientIp)) {
+    if (!await checkRateLimit(key, clientIp)) {
         return res.status(429).json({
             error: 'Too Many Requests',
             message: 'Перевищено ліміт спроб автентифікації',
@@ -74,7 +62,7 @@ const validateKey = (req, res, next) => {
     next();
 };
 
-const validateSecretKey = (req, res, next) => {
+const validateSecretKey = async (req, res, next) => {
     const secretKey = extractSecretKey(req);
     const clientIp = req.ip || req.connection.remoteAddress || 'unknown';
     
@@ -85,7 +73,7 @@ const validateSecretKey = (req, res, next) => {
         });
     }
 
-    if (!checkRateLimit(secretKey, clientIp)) {
+    if (!await checkRateLimit(secretKey, clientIp)) {
         return res.status(429).json({
             error: 'Too Many Requests',
             message: 'Перевищено ліміт спроб автентифікації',
@@ -111,25 +99,28 @@ const validateSecretKeySocket = (secretKey) => {
     return secretKey && secretKey === SECRET_KEY;
 };
 
-const createSession = (socketId, key, playerId) => {
-    const sessionId = `${socketId}:${key}:${playerId || 'anonymous'}`;
+const createSession = async (socketId, key, playerId) => {
+    if (!redisClient.isOpen) return null;
+    const sessionId = `session:${socketId}`;
     const session = {
         socketId,
         key,
-        playerId,
-        createdAt: Date.now(),
-        lastActivity: Date.now()
+        playerId: playerId || 'anonymous',
+        createdAt: Date.now().toString(),
+        lastActivity: Date.now().toString()
     };
     
-    sessionCache.set(sessionId, session);
+    await redisClient.hSet(sessionId, session);
+    await redisClient.expire(sessionId, SESSION_TTL);
     return sessionId;
 };
 
-const validateSession = (socketId, key, playerId) => {
-    const sessionId = `${socketId}:${key}:${playerId || 'anonymous'}`;
-    const session = sessionCache.get(sessionId);
+const validateSession = async (socketId, key, playerId) => {
+    if (!redisClient.isOpen) return true;
+    const sessionId = `session:${socketId}`;
+    const session = await redisClient.hGetAll(sessionId);
     
-    if (!session) {
+    if (!session || Object.keys(session).length === 0) {
         return false;
     }
     
@@ -137,17 +128,18 @@ const validateSession = (socketId, key, playerId) => {
         return false;
     }
     
-    session.lastActivity = Date.now();
-    sessionCache.set(sessionId, session);
+    await redisClient.hSet(sessionId, 'lastActivity', Date.now().toString());
+    await redisClient.expire(sessionId, SESSION_TTL);
     return true;
 };
 
-const cleanupSession = (socketId, key, playerId) => {
-    const sessionId = `${socketId}:${key}:${playerId || 'anonymous'}`;
-    sessionCache.delete(sessionId);
+const cleanupSession = async (socketId) => {
+    if (!redisClient.isOpen) return;
+    const sessionId = `session:${socketId}`;
+    await redisClient.del(sessionId);
 };
 
-const authenticateSocketMessage = (socket, data) => {
+const authenticateSocketMessage = async (socket, data) => {
     if (!data || typeof data !== 'object') {
         return false;
     }
@@ -159,14 +151,14 @@ const authenticateSocketMessage = (socket, data) => {
         if (!data.key || !VALID_KEYS.includes(data.key)) {
             return false;
         }
-        return validateSession(socket.id, socket.authKey, data.playerId);
+        return await validateSession(socket.id, socket.authKey, data.playerId);
     }
     
     if (!data.key || !validateKeySocket(data.key)) {
         return false;
     }
     
-    return validateSession(socket.id, data.key, data.playerId);
+    return await validateSession(socket.id, data.key, data.playerId);
 };
 
 module.exports = {
@@ -179,5 +171,6 @@ module.exports = {
     cleanupSession,
     authenticateSocketMessage,
     extractApiKey,
-    extractSecretKey
+    extractSecretKey,
+    redisClient
 };

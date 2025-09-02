@@ -1,15 +1,11 @@
-const { validateKeySocket, validateSecretKeySocket, createSession, validateSession, cleanupSession, authenticateSocketMessage } = require('../middleware/auth');
+const { validateKeySocket, validateSecretKeySocket, createSession, validateSession, cleanupSession, authenticateSocketMessage, redisClient } = require('../middleware/auth');
 const battleStatsService = require('../services/battleStatsService');
 const queue = require('../config/queue');
 const metrics = require('../config/metrics');
-const { LRUCache } = require('lru-cache');
 
-const rateLimitCache = new LRUCache({
-   max: 10000,
-   ttl: 30000
-});
 
 const RATE_LIMIT_MAX = 100;
+const RATE_LIMIT_TTL = 30;
 const MAX_PAYLOAD_SIZE = 2 * 1024 * 1024;
 
 class WebSocketHandler {
@@ -18,21 +14,17 @@ class WebSocketHandler {
        this.connectedClients = new Map();
    }
 
-   getRateLimitKey(socketId, key, playerId) {
-       return `${socketId}:${key}:${playerId || 'anonymous'}`;
-   }
+   async checkRateLimit(socketId, key, playerId) {
+        if (!redisClient.isOpen) return true;
+        const rateLimitKey = `rate-limit-ws:${socketId}:${key}:${playerId || 'anonymous'}`;
+        const count = await redisClient.incr(rateLimitKey);
 
-   checkRateLimit(socketId, key, playerId) {
-       const rateLimitKey = this.getRateLimitKey(socketId, key, playerId);
-       const count = rateLimitCache.get(rateLimitKey) || 0;
-       
-       if (count >= RATE_LIMIT_MAX) {
-           return false;
-       }
-       
-       rateLimitCache.set(rateLimitKey, count + 1);
-       return true;
-   }
+        if (count === 1) {
+            await redisClient.expire(rateLimitKey, RATE_LIMIT_TTL);
+        }
+
+        return count <= RATE_LIMIT_MAX;
+    }
 
    checkPayloadSize(data) {
        const payloadSize = JSON.stringify(data).length;
@@ -69,13 +61,13 @@ class WebSocketHandler {
        }
    }
 
-   validateRequest(socket, data, callback, requiresPlayerId = false) {
+   async validateRequest(socket, data, callback, requiresPlayerId = false) {
        if (!data || typeof data !== 'object') {
            this.sendError(callback, 400, 'Невалідні дані запиту');
            return false;
        }
 
-       if (!authenticateSocketMessage(socket, data)) {
+       if (!await authenticateSocketMessage(socket, data)) {
            this.sendError(callback, 403, 'Помилка автентифікації');
            return false;
        }
@@ -96,7 +88,7 @@ class WebSocketHandler {
        }
 
        const keyForRateLimit = socket.authType === 'secret_key' ? data.secretKey : data.key;
-       if (!this.checkRateLimit(socket.id, keyForRateLimit, data.playerId)) {
+       if (!await this.checkRateLimit(socket.id, keyForRateLimit, data.playerId)) {
            this.sendError(callback, 429, 'Перевищено ліміт запитів');
            return false;
        }
@@ -105,7 +97,7 @@ class WebSocketHandler {
    }
 
    async handleUpdateStats(socket, data, callback) {
-       if (!this.validateRequest(socket, data, callback, true)) {
+       if (!await this.validateRequest(socket, data, callback, true)) {
            return;
        }
 
@@ -157,7 +149,7 @@ class WebSocketHandler {
    }
 
    async handleGetStats(socket, data, callback) {
-       if (!this.validateRequest(socket, data, callback)) {
+       if (!await this.validateRequest(socket, data, callback)) {
            return;
        }
 
@@ -171,7 +163,7 @@ class WebSocketHandler {
    }
 
    async handleGetOtherPlayersStats(socket, data, callback) {
-       if (!this.validateRequest(socket, data, callback, true)) {
+       if (!await this.validateRequest(socket, data, callback, true)) {
            return;
        }
 
@@ -185,7 +177,7 @@ class WebSocketHandler {
    }
 
    async handleImportStats(socket, data, callback) {
-       if (!this.validateRequest(socket, data, callback)) {
+       if (!await this.validateRequest(socket, data, callback)) {
            return;
        }
 
@@ -210,7 +202,7 @@ class WebSocketHandler {
    }
 
    async handleClearStats(socket, data, callback) {
-       if (!this.validateRequest(socket, data, callback)) {
+       if (!await this.validateRequest(socket, data, callback)) {
            return;
        }
 
@@ -232,7 +224,7 @@ class WebSocketHandler {
    }
 
    async handleDeleteBattle(socket, data, callback) {
-       if (!this.validateRequest(socket, data, callback)) {
+       if (!await this.validateRequest(socket, data, callback)) {
            return;
        }
 
@@ -292,8 +284,8 @@ class WebSocketHandler {
        });
    }
 
-   handleJoinRoom(socket, data, callback) {
-       if (!this.validateRequest(socket, data, callback)) {
+   async handleJoinRoom(socket, data, callback) {
+       if (!await this.validateRequest(socket, data, callback)) {
            return;
        }
 
@@ -344,23 +336,23 @@ class WebSocketHandler {
        });
    }
 
-   handleDisconnect(socket, reason) {
+   async handleDisconnect(socket, reason) {
        const clientInfo = this.connectedClients.get(socket.id);
        if (clientInfo) {
-           cleanupSession(socket.id, clientInfo.key, clientInfo.playerId);
+           await cleanupSession(socket.id);
            this.connectedClients.delete(socket.id);
        }
        console.log(`Клієнт відключився: ${socket.id}, причина: ${reason}`);
    }
 }
 
-function authenticateSocket(socket, next) {
+async function authenticateSocket(socket, next) {
    const key = socket.handshake.query.key || socket.handshake.auth?.key;
    const secretKey = socket.handshake.query.secretKey || socket.handshake.auth?.secretKey;
    const playerId = socket.handshake.query.playerId || socket.handshake.auth?.playerId;
    
    if (key && validateKeySocket(key)) {
-       const sessionId = createSession(socket.id, key, playerId);
+       const sessionId = await createSession(socket.id, key, playerId);
        socket.authKey = key;
        socket.sessionId = sessionId;
        socket.authType = 'api_key';
@@ -368,7 +360,7 @@ function authenticateSocket(socket, next) {
    }
    
    if (secretKey && validateSecretKeySocket(secretKey)) {
-       const sessionId = createSession(socket.id, secretKey, playerId);
+       const sessionId = await createSession(socket.id, secretKey, playerId);
        socket.authKey = secretKey;
        socket.sessionId = sessionId;
        socket.authType = 'secret_key';
