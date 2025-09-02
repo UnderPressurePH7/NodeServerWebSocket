@@ -20,11 +20,15 @@ class BattleStatsRepository {
 
     async getPaginatedBattles(key, page = 1, limit = 10) {
         const skip = (page - 1) * limit;
+        
+        const fullDoc = await BattleStats.findById(key);
+        if (!fullDoc) {
+            return [];
+        }
 
-        return await BattleStats.aggregate([
+        const result = await BattleStats.aggregate([
             { $match: { _id: key } },
             { $project: {
-                PlayerInfo: 1,
                 battles: { $objectToArray: "$BattleStats" }
             }},
             { $unwind: "$battles" },
@@ -33,15 +37,19 @@ class BattleStatsRepository {
             { $limit: limit },
             { $group: {
                 _id: "$_id",
-                PlayerInfo: { $first: "$PlayerInfo" },
                 BattleStats: { $push: "$battles" }
             }},
             { $project: {
                 _id: 1,
-                PlayerInfo: 1,
                 BattleStats: { $arrayToObject: "$BattleStats" }
             }}
         ]);
+
+        if (result.length > 0) {
+            result[0].PlayerInfo = fullDoc.PlayerInfo;
+        }
+
+        return result;
     }
 
     async updateBattleStats(key, updates) {
