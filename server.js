@@ -17,7 +17,7 @@ const queue = require('./config/queue');
 const metrics = require('./config/metrics');
 const { initializeWebSocket } = require('./routes/websockets');
 const { version } = require('./package.json');
-const { redisClient } = require('./middleware/auth');
+const { setRedisClient } = require('./middleware/auth');
 
 const numCPUs = os.cpus().length;
 const port = process.env.PORT || 3000;
@@ -118,14 +118,19 @@ if (cluster.isPrimary) {
         allowEIO3: true
     });
     
-    const pubClient = createClient({ url: process.env.REDISCLOUD_URL || process.env.REDIS_URL });
-    const subClient = pubClient.duplicate();
+    const redisUrl = process.env.REDISCLOUD_URL || process.env.REDIS_URL;
+    const redisClient = createClient({ url: redisUrl });
+    
+    setRedisClient(redisClient);
 
-    Promise.all([pubClient.connect(), subClient.connect()]).then(() => {
-        io.adapter(createAdapter(pubClient, subClient));
+    const subClient = redisClient.duplicate();
+
+    Promise.all([redisClient.connect(), subClient.connect()]).then(() => {
+        io.adapter(createAdapter(redisClient, subClient));
         console.log(`Socket.IO Redis adapter for worker ${process.pid} connected.`);
     }).catch(err => {
         console.error(`Failed to connect Redis adapter for worker ${process.pid}:`, err);
+        process.exit(1); 
     });
     
     server.setTimeout(30000);
@@ -276,8 +281,9 @@ if (cluster.isPrimary) {
             console.log('HTTP-сервер закрито.');
             await mongoose.disconnect();
             console.log('MongoDB відключено.');
-            await redisClient.quit();
-            console.log('Redis client відключено.');
+            if(redisClient.isOpen) await redisClient.quit();
+            if(subClient.isOpen) await subClient.quit();
+            console.log('Redis clients відключено.');
             cluster.worker.disconnect();
         });
     };

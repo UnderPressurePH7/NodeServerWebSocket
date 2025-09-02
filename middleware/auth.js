@@ -1,17 +1,16 @@
 const VALID_KEYS = require('../config/validKey');
-const { createClient } = require('redis');
 
 const SECRET_KEY = process.env.SECRET_KEY;
-const REDIS_URL = process.env.REDISCLOUD_URL || process.env.REDIS_URL;
+let redisClient;
 
-const redisClient = createClient({ url: REDIS_URL });
-redisClient.on('error', (err) => console.error('Redis Client Error', err));
-(async () => await redisClient.connect())();
-
+const setRedisClient = (client) => {
+    redisClient = client;
+    console.log('Redis client has been set in auth middleware.');
+};
 
 const RATE_LIMIT_MAX = 600;
-const RATE_LIMIT_TTL = 300; // 5 minutes
-const SESSION_TTL = 3600; // 1 hour
+const RATE_LIMIT_TTL = 300; 
+const SESSION_TTL = 3600;
 
 const extractApiKey = (req) => {
     return req.headers['x-api-key'];
@@ -22,7 +21,7 @@ const extractSecretKey = (req) => {
 };
 
 const checkRateLimit = async (key, identifier) => {
-    if (!redisClient.isOpen) return true;
+    if (!redisClient || !redisClient.isOpen) return true;
     const rateLimitKey = `rate-limit:${key}:${identifier}`;
     const attempts = await redisClient.incr(rateLimitKey);
     
@@ -100,7 +99,7 @@ const validateSecretKeySocket = (secretKey) => {
 };
 
 const createSession = async (socketId, key, playerId) => {
-    if (!redisClient.isOpen) return null;
+    if (!redisClient || !redisClient.isOpen) return null;
     const sessionId = `session:${socketId}`;
     const session = {
         socketId,
@@ -116,7 +115,7 @@ const createSession = async (socketId, key, playerId) => {
 };
 
 const validateSession = async (socketId, key, playerId) => {
-    if (!redisClient.isOpen) return true;
+    if (!redisClient || !redisClient.isOpen) return true;
     const sessionId = `session:${socketId}`;
     const session = await redisClient.hGetAll(sessionId);
     
@@ -134,7 +133,7 @@ const validateSession = async (socketId, key, playerId) => {
 };
 
 const cleanupSession = async (socketId) => {
-    if (!redisClient.isOpen) return;
+    if (!redisClient || !redisClient.isOpen) return;
     const sessionId = `session:${socketId}`;
     await redisClient.del(sessionId);
 };
@@ -162,6 +161,7 @@ const authenticateSocketMessage = async (socket, data) => {
 };
 
 module.exports = {
+    setRedisClient, 
     validateKey,
     validateKeySocket,
     validateSecretKey,
@@ -171,6 +171,5 @@ module.exports = {
     cleanupSession,
     authenticateSocketMessage,
     extractApiKey,
-    extractSecretKey,
-    redisClient
+    extractSecretKey
 };
