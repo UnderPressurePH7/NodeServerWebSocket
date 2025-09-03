@@ -45,11 +45,23 @@ const logServerRequest = (req, res, next) => {
 };
 
 const addServerHeaders = (req, res, next) => {
+    const existingOrigin = res.get('Access-Control-Allow-Origin');
+    const existingCredentials = res.get('Access-Control-Allow-Credentials');
+    const existingMethods = res.get('Access-Control-Allow-Methods');
+    const existingHeaders = res.get('Access-Control-Allow-Headers');
+    
     res.set({
         'X-API-Version': API_VERSION,
         'X-Powered-By': 'BattleStats-Client-API',
-        'X-Request-ID': req.id || `cli_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
+        'X-Request-ID': req.id || `cli_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+        'Cache-Control': 'no-cache, no-store, must-revalidate'
     });
+    
+    if (existingOrigin) res.set('Access-Control-Allow-Origin', existingOrigin);
+    if (existingCredentials) res.set('Access-Control-Allow-Credentials', existingCredentials);
+    if (existingMethods) res.set('Access-Control-Allow-Methods', existingMethods);
+    if (existingHeaders) res.set('Access-Control-Allow-Headers', existingHeaders);
+    
     next();
 };
 
