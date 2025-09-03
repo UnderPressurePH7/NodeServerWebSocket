@@ -101,7 +101,6 @@ if (cluster.isPrimary && process.env.NODE_ENV === 'production') {
     origin: '*',
       methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
       allowedHeaders: ['Content-Type', 'X-Player-ID', 'X-API-Key', 'X-Secret-Key'],
-      credentials: true,
       maxAge: 86400,
       preflightContinue: false,
       optionsSuccessStatus: 204
