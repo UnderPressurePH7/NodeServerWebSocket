@@ -33,6 +33,10 @@ const checkRateLimit = async (key, identifier) => {
 };
 
 const validateKey = async (req, res, next) => {
+
+    if (req.method === 'OPTIONS') {
+        return next();
+    }
     const key = extractApiKey(req);
     const clientIp = req.ip || req.connection.remoteAddress || 'unknown';
     
@@ -62,6 +66,9 @@ const validateKey = async (req, res, next) => {
 };
 
 const validateSecretKey = async (req, res, next) => {
+    if (req.method === 'OPTIONS') {
+        return next();
+    }
     const secretKey = extractSecretKey(req);
     const clientIp = req.ip || req.connection.remoteAddress || 'unknown';
     
