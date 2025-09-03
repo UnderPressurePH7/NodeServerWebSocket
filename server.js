@@ -158,8 +158,8 @@ const httpCorsOptions = {
   }));
   
 
-//   app.use(cors(httpCorsOptions));
-//   app.options('*', cors(httpCorsOptions));
+    app.use(cors(httpCorsOptions));
+    app.options('*', cors(httpCorsOptions));
 
   const sendErrorResponse = (res, error) => {
       const isDev = process.env.NODE_ENV === 'development';

@@ -1,31 +1,8 @@
 const express = require('express');
-const cors = require('cors');
 const router = express.Router();
-
 const { validateKey, validateSecretKey } = require('../middleware/auth');
 const battleStatsController = require('../controllers/battleStatsController');
 const { version, name } = require('../package.json');
-
-const allowedOrigins = ['https://underpressureph7.github.io'];
-const httpCorsOptions = {
-    origin: (origin, callback) => {
-        if (!origin || allowedOrigins.includes(origin)) {
-            callback(null, origin);
-        } else {
-            console.error(`CORS rejected: ${origin}`);
-            callback(new Error('Not allowed by CORS'));
-        }
-    },
-    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'X-Player-ID', 'X-API-Key', 'X-Secret-Key'],
-    credentials: true,
-    maxAge: 86400,
-    preflightContinue: false,
-    optionsSuccessStatus: 204
-};
-
-router.use(cors(httpCorsOptions));
-router.options('*', cors(httpCorsOptions));
 
 const API_VERSION = version;
 
