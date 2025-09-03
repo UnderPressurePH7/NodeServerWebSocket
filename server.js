@@ -68,9 +68,7 @@ if (cluster.isPrimary && process.env.NODE_ENV === 'production') {
       }
   }
 
-  const allowedOrigins = [
-      'https://underpressureph7.github.io'
-  ];
+const allowedOrigins = ['https://underpressureph7.github.io'];
 
   const serverCorsOptions = {
       origin: true,
@@ -82,23 +80,15 @@ if (cluster.isPrimary && process.env.NODE_ENV === 'production') {
       optionsSuccessStatus: 204
   };
 
-  const httpCorsOptions = {
-    //   origin: function (origin, callback) {
-    //       console.log('CORS check: Received origin:', origin);
-
-    //         if (!origin) {
-    //             console.log('CORS check: No origin, allowing.');
-    //             return callback(null, true);
-    //         }
-
-    //         if (allowedOrigins.includes(origin)) {
-    //             console.log(`CORS check: Origin "${origin}" is in the allowed list.`);
-    //             return callback(null, true);
-    //         }
-    //       console.error(`CORS check: Origin "${origin}" is NOT in the allowed list:`, allowedOrigins);
-    //       callback(new Error(`Origin ${origin} not allowed by CORS policy`));
-    //   },
-      origin: true,
+const httpCorsOptions = {
+    origin: (origin, callback) => {
+        if (!origin || allowedOrigins.includes(origin)) {
+            callback(null, origin); 
+        } else {
+            console.error(`CORS rejected: ${origin}`);
+            callback(new Error('Not allowed by CORS'));
+        }
+    },
       methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
       allowedHeaders: ['Content-Type', 'X-Player-ID', 'X-API-Key', 'X-Secret-Key'],
       credentials: true,
@@ -251,7 +241,7 @@ if (cluster.isPrimary && process.env.NODE_ENV === 'production') {
   });
 
   app.use('/api/server', cors(serverCorsOptions), serverBattleStatsRoutes);
-  app.use('/api/battle-stats', cors(httpCorsOptions), battleStatsRoutes);
+  app.use('/api/battle-stats', battleStatsRoutes);
 
   app.use((req, res, next) => {
       next(new NotFoundError(`Route ${req.method} ${req.path} not found`));
