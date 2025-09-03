@@ -84,17 +84,18 @@ if (cluster.isPrimary && process.env.NODE_ENV === 'production') {
 
   const httpCorsOptions = {
       origin: function (origin, callback) {
-
           console.log('CORS check: Received origin:', origin);
-          console.log('CORS check: Allowed origins:', allowedOrigins);
 
-          if (process.env.NODE_ENV !== 'production') {
-              return callback(null, true);
-          }
-          if (!origin || allowedOrigins.includes(origin)) {
-              return callback(null, true);
-          }
-          console.error(`CORS check: Origin ${origin} not allowed by CORS policy.`);
+            if (!origin) {
+                console.log('CORS check: No origin, allowing.');
+                return callback(null, true);
+            }
+
+            if (allowedOrigins.includes(origin)) {
+                console.log(`CORS check: Origin "${origin}" is in the allowed list.`);
+                return callback(null, true);
+            }
+          console.error(`CORS check: Origin "${origin}" is NOT in the allowed list:`, allowedOrigins);
           callback(new Error(`Origin ${origin} not allowed by CORS policy`));
       },
       methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
