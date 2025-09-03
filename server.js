@@ -160,6 +160,8 @@ if (cluster.isPrimary && process.env.NODE_ENV === 'production') {
         parameterLimit: 1000
     }));
 
+    app.use(cors(httpCorsOptions));
+    
     const sendErrorResponse = (res, error) => {
         const isDev = process.env.NODE_ENV === 'development';
         const statusCode = error.statusCode || 500;
