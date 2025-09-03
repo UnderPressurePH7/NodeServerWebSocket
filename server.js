@@ -251,7 +251,7 @@ if (cluster.isPrimary && process.env.NODE_ENV === 'production') {
   });
 
   app.use('/api/server', cors(serverCorsOptions), serverBattleStatsRoutes);
-  app.use('/api/battle-stats', battleStatsRoutes);
+  app.use('/api/battle-stats', cors(httpCorsOptions), battleStatsRoutes);
 
   app.use((req, res, next) => {
       next(new NotFoundError(`Route ${req.method} ${req.path} not found`));
