@@ -84,16 +84,21 @@ if (cluster.isPrimary && process.env.NODE_ENV === 'production') {
 
   const httpCorsOptions = {
       origin: function (origin, callback) {
+
+          console.log('CORS check: Received origin:', origin);
+          console.log('CORS check: Allowed origins:', allowedOrigins);
+
           if (process.env.NODE_ENV !== 'production') {
               return callback(null, true);
           }
           if (!origin || allowedOrigins.includes(origin)) {
               return callback(null, true);
           }
+          console.error(`CORS check: Origin ${origin} not allowed by CORS policy.`);
           callback(new Error(`Origin ${origin} not allowed by CORS policy`));
       },
       methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-      allowedHeaders: ['Content-Type', 'X-Player-ID', 'X-API-Key', 'X-Secret-Key', 'Authorization', 'Accept', 'Origin', 'X-Requested-With'],
+      allowedHeaders: ['Content-Type', 'X-Player-ID', 'X-API-Key', 'X-Secret-Key'],
       credentials: true,
       maxAge: 86400,
       preflightContinue: false,
