@@ -45,24 +45,12 @@ const logServerRequest = (req, res, next) => {
 };
 
 const addServerHeaders = (req, res, next) => {
-    const origin = req.get('origin');
-    
     res.set({
         'X-API-Version': API_VERSION,
         'X-Powered-By': 'BattleStats-Client-API',
         'X-Request-ID': req.id || `cli_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
         'Cache-Control': 'no-cache, no-store, must-revalidate'
     });
-    
-    if (origin && (process.env.NODE_ENV !== 'production' || 
-        ['https://underpressureph7.github.io', 'https://underpressureph7.github.io/Widget_2.0'].includes(origin))) {
-        res.set('Access-Control-Allow-Origin', origin);
-        res.set('Access-Control-Allow-Credentials', 'true');
-        res.set('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,OPTIONS');
-        res.set('Access-Control-Allow-Headers', 'Content-Type,X-Player-ID,X-API-Key,X-Secret-Key,Authorization');
-    } else if (process.env.NODE_ENV !== 'production') {
-        res.set('Access-Control-Allow-Origin', '*');
-    }
     
     next();
 };

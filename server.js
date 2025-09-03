@@ -48,20 +48,20 @@ if (cluster.isPrimary && process.env.NODE_ENV === 'production') {
           Error.captureStackTrace(this, this.constructor);
       }
   }
-  
+
   class ValidationError extends AppError {
       constructor(message, details = null) {
           super(message, 400, 'VALIDATION_ERROR');
           this.details = details;
       }
   }
-  
+
   class NotFoundError extends AppError {
       constructor(message = 'Resource not found') {
           super(message, 404, 'NOT_FOUND');
       }
   }
-  
+
   class ServerError extends AppError {
       constructor(message = 'Internal server error') {
           super(message, 500, 'INTERNAL_ERROR');
@@ -69,8 +69,7 @@ if (cluster.isPrimary && process.env.NODE_ENV === 'production') {
   }
 
   const allowedOrigins = [
-      'https://underpressureph7.github.io',
-      'https://underpressureph7.github.io/Widget_2.0'
+      'https://underpressureph7.github.io'
   ];
 
   const serverCorsOptions = {
@@ -111,7 +110,7 @@ if (cluster.isPrimary && process.env.NODE_ENV === 'production') {
       methods: ['GET', 'POST'],
       credentials: true
   };
-  
+
   const io = new Server(server, {
       cors: socketCorsOptions,
       transports: ['websocket', 'polling'],
@@ -119,10 +118,10 @@ if (cluster.isPrimary && process.env.NODE_ENV === 'production') {
       pingInterval: 25000,
       allowEIO3: true
   });
-  
+
   const redisUrl = process.env.REDISCLOUD_URL || process.env.REDIS_URL;
   const redisClient = createClient({ url: redisUrl });
-  
+
   setRedisClient(redisClient);
 
   const subClient = redisClient.duplicate();
@@ -134,7 +133,7 @@ if (cluster.isPrimary && process.env.NODE_ENV === 'production') {
       console.error(`Failed to connect Redis adapter for worker ${process.pid}:`, err);
       process.exit(1);
   });
-  
+
   server.setTimeout(30000);
   server.keepAliveTimeout = 61000;
   server.headersTimeout = 62000;
@@ -144,51 +143,30 @@ if (cluster.isPrimary && process.env.NODE_ENV === 'production') {
 
   app.use(helmet({ contentSecurityPolicy: false }));
 
-  app.use(compression({ 
-      level: process.env.NODE_ENV === 'production' ? 9 : 1, 
+  app.use(compression({
+      level: process.env.NODE_ENV === 'production' ? 9 : 1,
       threshold: '1kb',
       filter: (req, res) => !req.headers['x-no-compression']
   }));
 
-  app.use(express.json({ 
+  app.use(express.json({
       limit: process.env.NODE_ENV === 'production' ? '2mb' : '5mb',
       type: ['application/json', 'text/plain']
   }));
 
-  app.use(express.urlencoded({ 
+  app.use(express.urlencoded({
       limit: process.env.NODE_ENV === 'production' ? '2mb' : '5mb',
-      extended: false, 
+      extended: false,
       parameterLimit: 1000
   }));
 
-  app.use((req, res, next) => {
-      const origin = req.get('origin');
-      
-      if (origin && allowedOrigins.includes(origin)) {
-          res.header('Access-Control-Allow-Origin', origin);
-      } else if (process.env.NODE_ENV !== 'production') {
-          res.header('Access-Control-Allow-Origin', '*');
-      }
-      
-      res.header('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,OPTIONS');
-      res.header('Access-Control-Allow-Headers', 'Content-Type,X-Player-ID,X-API-Key,X-Secret-Key,Authorization,Accept,Origin,X-Requested-With');
-      res.header('Access-Control-Allow-Credentials', 'true');
-      res.header('Access-Control-Max-Age', '86400');
-      
-      if (req.method === 'OPTIONS') {
-          return res.status(204).end();
-      }
-      
-      next();
-  });
-
   app.use(cors(httpCorsOptions));
   app.options('*', cors(httpCorsOptions));
-  
+
   const sendErrorResponse = (res, error) => {
       const isDev = process.env.NODE_ENV === 'development';
       const statusCode = error.statusCode || 500;
-      
+
       const response = {
           success: false,
           error: {
@@ -198,10 +176,10 @@ if (cluster.isPrimary && process.env.NODE_ENV === 'production') {
           },
           timestamp: new Date().toISOString()
       };
-      
+
       if (isDev && error.stack) response.error.stack = error.stack;
       if (error.details) response.error.details = error.details;
-      
+
       res.status(statusCode).json(response);
   };
 
@@ -246,7 +224,7 @@ if (cluster.isPrimary && process.env.NODE_ENV === 'production') {
   });
 
   app.get('/api/queue-status', (req, res) => {
-      const successRate = metrics.totalRequests > 0 
+      const successRate = metrics.totalRequests > 0
           ? ((metrics.successfulRequests / metrics.totalRequests) * 100).toFixed(2)
           : '0';
 
