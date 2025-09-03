@@ -98,9 +98,10 @@ if (cluster.isPrimary && process.env.NODE_ENV === 'production') {
     //       console.error(`CORS check: Origin "${origin}" is NOT in the allowed list:`, allowedOrigins);
     //       callback(new Error(`Origin ${origin} not allowed by CORS policy`));
     //   },
-    origin: '*',
+      origin: true,
       methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
       allowedHeaders: ['Content-Type', 'X-Player-ID', 'X-API-Key', 'X-Secret-Key'],
+      credentials: true,
       maxAge: 86400,
       preflightContinue: false,
       optionsSuccessStatus: 204
