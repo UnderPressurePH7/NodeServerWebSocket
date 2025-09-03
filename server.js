@@ -163,27 +163,57 @@ if (cluster.isPrimary && process.env.NODE_ENV === 'production') {
        parameterLimit: 1000
    }));
 
-   app.use(cors(httpCorsOptions));
+//    app.use(cors(httpCorsOptions));
    
-   const sendErrorResponse = (res, error) => {
-       const isDev = process.env.NODE_ENV === 'development';
-       const statusCode = error.statusCode || 500;
+//    const sendErrorResponse = (res, error) => {
+//        const isDev = process.env.NODE_ENV === 'development';
+//        const statusCode = error.statusCode || 500;
        
-       const response = {
-           success: false,
-           error: {
-               code: error.code || 'UNKNOWN_ERROR',
-               message: error.message,
-               statusCode
-           },
-           timestamp: new Date().toISOString()
-       };
+//        const response = {
+//            success: false,
+//            error: {
+//                code: error.code || 'UNKNOWN_ERROR',
+//                message: error.message,
+//                statusCode
+//            },
+//            timestamp: new Date().toISOString()
+//        };
        
-       if (isDev && error.stack) response.error.stack = error.stack;
-       if (error.details) response.error.details = error.details;
+//        if (isDev && error.stack) response.error.stack = error.stack;
+//        if (error.details) response.error.details = error.details;
        
-       res.status(statusCode).json(response);
-   };
+//        res.status(statusCode).json(response);
+//    };
+
+
+app.use((req, res, next) => {
+    console.log(`=== REQUEST DEBUG ===`);
+    console.log(`Method: ${req.method}`);
+    console.log(`Path: ${req.path}`);
+    console.log(`Origin: ${req.headers.origin}`);
+    console.log(`Headers:`, req.headers);
+    
+    const origin = req.headers.origin;
+    
+    if (origin === 'https://underpressureph7.github.io' || !origin) {
+        res.header('Access-Control-Allow-Origin', origin || '*');
+        res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+        res.header('Access-Control-Allow-Headers', 'Content-Type, X-Player-ID, X-API-Key, X-Secret-Key, Authorization');
+        res.header('Access-Control-Allow-Credentials', 'true');
+        res.header('Access-Control-Max-Age', '86400');
+        
+        console.log('CORS headers set for:', origin);
+    } else {
+        console.log('CORS blocked for origin:', origin);
+    }
+    
+    if (req.method === 'OPTIONS') {
+        console.log('Handling OPTIONS preflight request');
+        return res.status(200).end();
+    }
+    
+    next();
+});
 
    const sendSuccessResponse = (res, data = {}, statusCode = 200) => {
        res.status(statusCode).json({
