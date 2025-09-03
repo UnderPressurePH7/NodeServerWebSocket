@@ -69,7 +69,8 @@ if (cluster.isPrimary && process.env.NODE_ENV === 'production') {
   }
 
   const allowedOrigins = [
-      'https://underpressureph7.github.io'
+      'https://underpressureph7.github.io',
+      'https://underpressureph7.github.io/Widget_2.0'
   ];
 
   const serverCorsOptions = {
@@ -93,7 +94,7 @@ if (cluster.isPrimary && process.env.NODE_ENV === 'production') {
           callback(new Error(`Origin ${origin} not allowed by CORS policy`));
       },
       methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-      allowedHeaders: ['Content-Type', 'X-Player-ID', 'X-API-Key', 'X-Secret-Key', 'Authorization'],
+      allowedHeaders: ['Content-Type', 'X-Player-ID', 'X-API-Key', 'X-Secret-Key', 'Authorization', 'Accept', 'Origin', 'X-Requested-With'],
       credentials: true,
       maxAge: 86400,
       preflightContinue: false,
@@ -160,8 +161,28 @@ if (cluster.isPrimary && process.env.NODE_ENV === 'production') {
       parameterLimit: 1000
   }));
 
+  app.use((req, res, next) => {
+      const origin = req.get('origin');
+      
+      if (origin && allowedOrigins.includes(origin)) {
+          res.header('Access-Control-Allow-Origin', origin);
+      } else if (process.env.NODE_ENV !== 'production') {
+          res.header('Access-Control-Allow-Origin', '*');
+      }
+      
+      res.header('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,OPTIONS');
+      res.header('Access-Control-Allow-Headers', 'Content-Type,X-Player-ID,X-API-Key,X-Secret-Key,Authorization,Accept,Origin,X-Requested-With');
+      res.header('Access-Control-Allow-Credentials', 'true');
+      res.header('Access-Control-Max-Age', '86400');
+      
+      if (req.method === 'OPTIONS') {
+          return res.status(204).end();
+      }
+      
+      next();
+  });
+
   app.use(cors(httpCorsOptions));
-  
   app.options('*', cors(httpCorsOptions));
   
   const sendErrorResponse = (res, error) => {

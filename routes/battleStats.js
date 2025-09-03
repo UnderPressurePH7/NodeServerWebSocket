@@ -45,10 +45,7 @@ const logServerRequest = (req, res, next) => {
 };
 
 const addServerHeaders = (req, res, next) => {
-    const existingOrigin = res.get('Access-Control-Allow-Origin');
-    const existingCredentials = res.get('Access-Control-Allow-Credentials');
-    const existingMethods = res.get('Access-Control-Allow-Methods');
-    const existingHeaders = res.get('Access-Control-Allow-Headers');
+    const origin = req.get('origin');
     
     res.set({
         'X-API-Version': API_VERSION,
@@ -57,10 +54,15 @@ const addServerHeaders = (req, res, next) => {
         'Cache-Control': 'no-cache, no-store, must-revalidate'
     });
     
-    if (existingOrigin) res.set('Access-Control-Allow-Origin', existingOrigin);
-    if (existingCredentials) res.set('Access-Control-Allow-Credentials', existingCredentials);
-    if (existingMethods) res.set('Access-Control-Allow-Methods', existingMethods);
-    if (existingHeaders) res.set('Access-Control-Allow-Headers', existingHeaders);
+    if (origin && (process.env.NODE_ENV !== 'production' || 
+        ['https://underpressureph7.github.io', 'https://underpressureph7.github.io/Widget_2.0'].includes(origin))) {
+        res.set('Access-Control-Allow-Origin', origin);
+        res.set('Access-Control-Allow-Credentials', 'true');
+        res.set('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,OPTIONS');
+        res.set('Access-Control-Allow-Headers', 'Content-Type,X-Player-ID,X-API-Key,X-Secret-Key,Authorization');
+    } else if (process.env.NODE_ENV !== 'production') {
+        res.set('Access-Control-Allow-Origin', '*');
+    }
     
     next();
 };
