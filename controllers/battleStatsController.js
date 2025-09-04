@@ -6,7 +6,7 @@ const battleStatsController = {
     updateStats: (req, res) => {
         console.log('📥 UPDATE-STATS запит отримано:', {
             timestamp: new Date().toISOString(),
-            key: req.params.key,
+            key: req.apiKey,
             playerId: req.headers['x-player-id'],
             bodySize: JSON.stringify(req.body).length,
             hasBody: !!req.body,
@@ -35,7 +35,7 @@ const battleStatsController = {
         console.log('🔍 Параметри запиту:', {
             key: key,
             playerId: playerId,
-            keyFromParams: req.params.key,
+            keyFromParams: req.apiKey,
             playerIdFromHeaders: req.headers['x-player-id']
         });
 
@@ -120,7 +120,7 @@ const battleStatsController = {
     getStats: async (req, res) => {
         console.log('📤 GET-STATS запит отримано:', {
             timestamp: new Date().toISOString(),
-            key: req.params.key,
+            key: req.apiKey,
             page: req.query.page,
             limit: req.query.limit,
             url: req.url,
@@ -128,7 +128,7 @@ const battleStatsController = {
         });
 
         try {
-            const key = req.params.key;
+            const key = req.apiKey;
             const page = parseInt(req.query.page) || 1;
             const limit = req.query.limit !== undefined ? parseInt(req.query.limit) : 10;
 
@@ -152,7 +152,7 @@ const battleStatsController = {
             console.log('📤 GET-STATS відповідь надіслана');
         } catch (error) {
             console.error('❌ Помилка при завантаженні даних:', {
-                key: req.params.key,
+                key: req.apiKey,
                 error: error.message,
                 stack: error.stack,
                 timestamp: new Date().toISOString()
@@ -167,12 +167,12 @@ const battleStatsController = {
     getOtherPlayersStats: async (req, res) => {
         console.log('📤 GET-OTHER-PLAYERS запит отримано:', {
             timestamp: new Date().toISOString(),
-            key: req.params.key,
+            key: req.apiKey,
             playerId: req.headers['x-player-id']
         });
 
         try {
-            const key = req.params.key;
+            const key = req.apiKey;
             const excludePlayerId = req.headers['x-player-id'];
 
             if (!excludePlayerId) {
@@ -198,7 +198,7 @@ const battleStatsController = {
             res.status(200).json(result);
         } catch (error) {
             console.error('❌ Помилка при завантаженні даних інших гравців:', {
-                key: req.params.key,
+                key: req.apiKey,
                 excludePlayerId: req.headers['x-player-id'],
                 error: error.message,
                 stack: error.stack,
@@ -212,7 +212,7 @@ const battleStatsController = {
     },
 
     importStats: async (req, res) => {
-        const key = req.params.key;
+        const key = req.apiKey;
 
         console.log('📥 IMPORT-STATS запит отримано:', {
             timestamp: new Date().toISOString(),
@@ -242,8 +242,8 @@ const battleStatsController = {
     },
 
     clearStats: async (req, res) => {
-        const key = req.params.key;
-        
+        const key = req.apiKey;
+
         console.log('🗑️ CLEAR-STATS запит отримано:', {
             timestamp: new Date().toISOString(),
             key: key
@@ -269,7 +269,7 @@ const battleStatsController = {
     },
 
     deleteBattle: async (req, res) => {
-        const key = req.params.key;
+        const key = req.apiKey;
         const battleId = req.params.battleId;
 
         console.log('🗑️ DELETE-BATTLE запит отримано:', {
