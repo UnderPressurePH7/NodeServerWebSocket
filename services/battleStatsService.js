@@ -239,7 +239,8 @@ class BattleStatsService {
         });
 
         let statsDoc;
-        let fullDoc;
+        let fullDoc = await battleStatsRepository.findByKey(key);
+
         try {
             console.log('🔍 Перевіряємо, що зберігається в БД...');
             const rawData = await battleStatsRepository.getStatsRaw(key);
@@ -253,13 +254,12 @@ class BattleStatsService {
 
             if (limit === 0) {
                 console.log('📊 Отримуємо всі дані (limit = 0)');
-                statsDoc = await battleStatsRepository.findByKey(key);
+                statsDoc = fullDoc || {};
             } else {
                 console.log('📊 Отримуємо дані з пагінацією');
                 const results = await battleStatsRepository.getPaginatedBattles(key, page, limit);
-                
-                fullDoc = await battleStatsRepository.findByKey(key);
-                statsDoc = results[0];
+
+                statsDoc = results.length > 0 ? results[0] : {}; 
                 statsDoc.PlayerInfo = fullDoc ? fullDoc.PlayerInfo : {};
             }
 
@@ -272,7 +272,7 @@ class BattleStatsService {
                 playerInfoIsMap: statsDoc ? statsDoc.PlayerInfo instanceof Map : false
             });
 
-            if (!statsDoc) {
+            if (!statsDoc || Object.keys(statsDoc).length === 0) {
                 console.log('⚠️ Документ не знайдено, повертаємо порожній результат');
                 return {
                     success: true,
