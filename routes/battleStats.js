@@ -1,62 +1,47 @@
 const express = require('express');
 const router = express.Router();
 const { validateKey, validateSecretKey } = require('../middleware/auth');
+const { clientCors } = require('../middleware/cors');
 const battleStatsController = require('../controllers/battleStatsController');
 const { version, name } = require('../package.json');
 
-const API_VERSION = version;
+router.use(clientCors);
+router.options('*', clientCors);
 
-const createErrorResponse = (error, req) => {
-    const response = {
-        error: error.name || 'Unknown Error',
-        message: error.message,
-        timestamp: new Date().toISOString(),
-        path: req.originalUrl
-    };
+const createErrorResponse = (error, req) => ({
+    error: error.name || 'Unknown Error',
+    message: error.message,
+    timestamp: new Date().toISOString(),
+    path: req.originalUrl,
+    ...(error.code ? { code: error.code } : {}),
+    ...(process.env.NODE_ENV === 'development' && error.stack ? { stack: error.stack } : {})
+});
 
-    if (error.code) {
-        response.code = error.code;
-    }
+const createSuccessResponse = (data, meta = {}) => ({
+    success: true,
+    timestamp: new Date().toISOString(),
+    version,
+    ...data,
+    ...meta
+});
 
-    if (process.env.NODE_ENV === 'development' && error.stack) {
-        response.stack = error.stack;
-    }
-
-    return response;
-};
-
-const createSuccessResponse = (data, meta = {}) => {
-    return {
-        success: true,
-        timestamp: new Date().toISOString(),
-        version: API_VERSION,
-        ...data,
-        ...meta
-    };
-};
-
-const logServerRequest = (req, res, next) => {
+const logClientRequest = (req, res, next) => {
+    const bodySize = Buffer.byteLength(JSON.stringify(req.body || {}), 'utf8');
     console.log(`CLIENT API ${req.method} ${req.originalUrl}`);
-    console.log(`Data size: ${JSON.stringify(req.body).length} bytes`);
+    console.log(`Data size: ${bodySize} bytes`);
     console.log(`Time: ${new Date().toISOString()}`);
     console.log(`User-Agent: ${req.get('User-Agent')}`);
     console.log(`IP: ${req.ip}`);
     next();
 };
 
-const addServerHeaders = (req, res, next) => {
+const addClientHeaders = (req, res, next) => {
     res.set({
-        'X-API-Version': API_VERSION,
+        'X-API-Version': version,
         'X-Powered-By': 'BattleStats-Client-API',
         'X-Request-ID': req.id || `cli_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
         'Cache-Control': 'no-cache, no-store, must-revalidate'
     });
-    
-    next();
-};
-
-const extractKeyFromRequest = (req, res, next) => {
-    req.params.key = req.apiKey;
     next();
 };
 
@@ -69,72 +54,54 @@ const asyncHandler = (fn) => (req, res, next) => {
     Promise.resolve(fn(req, res, next)).catch(next);
 };
 
+// === ROUTES ===
+
 router.post('/update-stats',
-    addServerHeaders,
-    logServerRequest,
+    addClientHeaders,
+    logClientRequest,
     validateKey,
-    extractKeyFromRequest,
-    asyncHandler(async (req, res) => {
-        await battleStatsController.updateStats(req, res);
-    })
+    asyncHandler(battleStatsController.updateStats)
 );
 
 router.get('/stats',
-    addServerHeaders,
+    addClientHeaders,
     validateKey,
-    extractKeyFromRequest,
-    asyncHandler(async (req, res) => {
-        await battleStatsController.getStats(req, res);
-    })
+    asyncHandler(battleStatsController.getStats)
 );
 
 router.get('/other-players',
-    addServerHeaders,
+    addClientHeaders,
     validateKey,
-    extractKeyFromRequest,
-    asyncHandler(async (req, res) => {
-        await battleStatsController.getOtherPlayersStats(req, res);
-    })
+    asyncHandler(battleStatsController.getOtherPlayersStats)
 );
 
 router.post('/import',
-    addServerHeaders,
-    logServerRequest,
+    addClientHeaders,
+    logClientRequest,
     validateKey,
-    extractKeyFromRequest,
-    asyncHandler(async (req, res) => {
-        await battleStatsController.importStats(req, res);
-    })
+    asyncHandler(battleStatsController.importStats)
 );
 
 router.delete('/clear',
-    addServerHeaders,
+    addClientHeaders,
     validateKey,
-    extractKeyFromRequest,
-    asyncHandler(async (req, res) => {
-        await battleStatsController.clearStats(req, res);
-    })
+    asyncHandler(battleStatsController.clearStats)
 );
 
 router.delete('/battle/:battleId',
-    addServerHeaders,
+    addClientHeaders,
     validateKey,
-    extractKeyFromRequest,
-    asyncHandler(async (req, res) => {
-        await battleStatsController.deleteBattle(req, res);
-    })
+    asyncHandler(battleStatsController.deleteBattle)
 );
 
 router.delete('/clear-database',
-    addServerHeaders,
-    validateSecretKey,
-    asyncHandler(async (req, res) => {
-        await battleStatsController.clearDatabase(req, res);
-    })
+    addClientHeaders,
+    validateSecretKey, 
+    asyncHandler(battleStatsController.clearDatabase)
 );
 
 router.get('/health',
-    addServerHeaders,
+    addClientHeaders,
     (req, res) => {
         res.status(200).json(createSuccessResponse({
             status: 'healthy',
@@ -149,11 +116,11 @@ router.get('/health',
 );
 
 router.get('/version',
-    addServerHeaders,
+    addClientHeaders,
     (req, res) => {
         res.status(200).json(createSuccessResponse({
-            version: API_VERSION,
-            name: name,
+            version,
+            name,
             description: 'Client API для статистики боїв',
             authentication: 'X-API-Key заголовок обов\'язковий',
             endpoints: [
