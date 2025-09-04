@@ -239,6 +239,7 @@ class BattleStatsService {
         });
 
         let statsDoc;
+        let fullDoc;
         try {
             console.log('🔍 Перевіряємо, що зберігається в БД...');
             const rawData = await battleStatsRepository.getStatsRaw(key);
@@ -256,6 +257,8 @@ class BattleStatsService {
             } else {
                 console.log('📊 Отримуємо дані з пагінацією');
                 const results = await battleStatsRepository.getPaginatedBattles(key, page, limit);
+                
+                fullDoc = await battleStatsRepository.findByKey(key);
                 statsDoc = results[0];
                 statsDoc.PlayerInfo = fullDoc ? fullDoc.PlayerInfo : {};
             }
