@@ -257,6 +257,7 @@ class BattleStatsService {
                 console.log('📊 Отримуємо дані з пагінацією');
                 const results = await battleStatsRepository.getPaginatedBattles(key, page, limit);
                 statsDoc = results[0];
+                statsDoc.PlayerInfo = fullDoc ? fullDoc.PlayerInfo : {};
             }
 
             console.log('📊 Результат з репозиторію:', {
