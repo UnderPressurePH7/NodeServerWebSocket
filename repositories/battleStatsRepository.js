@@ -4,7 +4,7 @@ const mongoose = require('mongoose');
 class BattleStatsRepository {
     async findByKey(key) {
         try {
-            const result = await BattleStats.findById(key);
+            const result = await BattleStats.findById(key).lean();
             console.log('🔍 findByKey результат:', {
                 key,
                 found: !!result,
@@ -33,93 +33,139 @@ class BattleStatsRepository {
         return statsDoc;
     }
 
-    async getPaginatedBattles(key, page = 1, limit = 10) {
-        console.log('📊 getPaginatedBattles початок:', { key, page, limit });
+    // async getPaginatedBattles(key, page = 1, limit = 10) {
+    //     console.log('📊 getPaginatedBattles початок:', { key, page, limit });
         
-        try {
-            const fullDoc = await this.findByKey(key);
+    //     try {
+    //         const fullDoc = await this.findByKey(key);
             
-            if (!fullDoc) {
-                console.log('❌ Документ не знайдено для пагінації');
-                return [];
-            }
+    //         if (!fullDoc) {
+    //             console.log('❌ Документ не знайдено для пагінації');
+    //             return [];
+    //         }
 
-            console.log('📊 Повний документ отримано:', {
-                hasBattleStats: !!fullDoc.BattleStats,
-                hasPlayerInfo: !!fullDoc.PlayerInfo,
-                battleStatsType: typeof fullDoc.BattleStats,
-                playerInfoType: typeof fullDoc.PlayerInfo
-            });
+    //         console.log('📊 Повний документ отримано:', {
+    //             hasBattleStats: !!fullDoc.BattleStats,
+    //             hasPlayerInfo: !!fullDoc.PlayerInfo,
+    //             battleStatsType: typeof fullDoc.BattleStats,
+    //             playerInfoType: typeof fullDoc.PlayerInfo
+    //         });
 
-            let battlesArray = [];
+    //         let battlesArray = [];
             
-            if (fullDoc.BattleStats) {
-                if (fullDoc.BattleStats instanceof Map) {
-                    console.log('🔄 BattleStats це Map, конвертуємо...');
-                    for (const [battleId, battleData] of fullDoc.BattleStats) {
-                        battlesArray.push({
-                            battleId,
-                            battleData,
-                            startTime: battleData.startTime || 0
-                        });
-                    }
-                } else if (typeof fullDoc.BattleStats === 'object') {
-                    console.log('🔄 BattleStats це Object, конвертуємо...');
-                    for (const [battleId, battleData] of Object.entries(fullDoc.BattleStats)) {
-                        battlesArray.push({
-                            battleId,
-                            battleData,
-                            startTime: battleData.startTime || 0
-                        });
-                    }
+    //         if (fullDoc.BattleStats) {
+    //             if (fullDoc.BattleStats instanceof Map) {
+    //                 console.log('🔄 BattleStats це Map, конвертуємо...');
+    //                 for (const [battleId, battleData] of fullDoc.BattleStats) {
+    //                     battlesArray.push({
+    //                         battleId,
+    //                         battleData,
+    //                         startTime: battleData.startTime || 0
+    //                     });
+    //                 }
+    //             } else if (typeof fullDoc.BattleStats === 'object') {
+    //                 console.log('🔄 BattleStats це Object, конвертуємо...');
+    //                 for (const [battleId, battleData] of Object.entries(fullDoc.BattleStats)) {
+    //                     battlesArray.push({
+    //                         battleId,
+    //                         battleData,
+    //                         startTime: battleData.startTime || 0
+    //                     });
+    //                 }
+    //             }
+    //         }
+
+    //         console.log('📊 Масив боїв створено:', {
+    //             totalBattles: battlesArray.length,
+    //             sampleBattles: battlesArray.slice(0, 3).map(b => ({
+    //                 id: b.battleId,
+    //                 startTime: b.startTime
+    //             }))
+    //         });
+
+    //         battlesArray.sort((a, b) => (b.startTime || 0) - (a.startTime || 0));
+
+    //         const skip = (page - 1) * limit;
+    //         const paginatedBattles = battlesArray.slice(skip, skip + limit);
+
+    //         console.log('📊 Пагінація застосована:', {
+    //             total: battlesArray.length,
+    //             skip,
+    //             limit,
+    //             returned: paginatedBattles.length
+    //         });
+
+    //         const result = {
+    //             _id: key,
+    //             BattleStats: new Map(),
+    //             PlayerInfo: fullDoc.PlayerInfo || new Map()
+    //         };
+
+    //         paginatedBattles.forEach(({ battleId, battleData }) => {
+    //             result.BattleStats.set(battleId, battleData);
+    //         });
+
+    //         console.log('✅ getPaginatedBattles завершено:', {
+    //             resultBattleStatsSize: result.BattleStats.size,
+    //             resultPlayerInfoSize: result.PlayerInfo ? result.PlayerInfo.size : 0
+    //         });
+
+    //         return [result];
+            
+    //     } catch (error) {
+    //         console.error('❌ Помилка в getPaginatedBattles:', error);
+            
+    //         console.log('🔄 Fallback: повертаємо весь документ');
+    //         const fallbackDoc = await this.findByKey(key);
+    //         return fallbackDoc ? [fallbackDoc] : [];
+    //     }
+    // }
+
+    async getPaginatedBattles(key, page = 1, limit = 10) {
+    const skip = (page - 1) * limit;
+
+    try {
+        const results = await BattleStats.aggregate([
+            { $match: { _id: key } },
+            {
+                $project: {
+                    PlayerInfo: "$PlayerInfo",
+                    BattleStats: { $objectToArray: "$BattleStats" }
+                }
+            },
+            { $unwind: "$BattleStats" },
+            { $sort: { "BattleStats.v.startTime": -1 } },
+            { $skip: skip },
+            { $limit: limit },
+            {
+                $group: {
+                    _id: "$_id",
+                    PlayerInfo: { $first: "$PlayerInfo" },
+                    BattleStats: { $push: "$BattleStats" }
+                }
+            },
+            {
+                $project: {
+                    _id: 1,
+                    PlayerInfo: 1,
+                    BattleStats: { $arrayToObject: "$BattleStats" }
                 }
             }
+        ]);
 
-            console.log('📊 Масив боїв створено:', {
-                totalBattles: battlesArray.length,
-                sampleBattles: battlesArray.slice(0, 3).map(b => ({
-                    id: b.battleId,
-                    startTime: b.startTime
-                }))
-            });
-
-            battlesArray.sort((a, b) => (b.startTime || 0) - (a.startTime || 0));
-
-            const skip = (page - 1) * limit;
-            const paginatedBattles = battlesArray.slice(skip, skip + limit);
-
-            console.log('📊 Пагінація застосована:', {
-                total: battlesArray.length,
-                skip,
-                limit,
-                returned: paginatedBattles.length
-            });
-
-            const result = {
-                _id: key,
-                BattleStats: new Map(),
-                PlayerInfo: fullDoc.PlayerInfo || new Map()
-            };
-
-            paginatedBattles.forEach(({ battleId, battleData }) => {
-                result.BattleStats.set(battleId, battleData);
-            });
-
-            console.log('✅ getPaginatedBattles завершено:', {
-                resultBattleStatsSize: result.BattleStats.size,
-                resultPlayerInfoSize: result.PlayerInfo ? result.PlayerInfo.size : 0
-            });
-
-            return [result];
-            
-        } catch (error) {
-            console.error('❌ Помилка в getPaginatedBattles:', error);
-            
-            console.log('🔄 Fallback: повертаємо весь документ');
-            const fallbackDoc = await this.findByKey(key);
-            return fallbackDoc ? [fallbackDoc] : [];
+        if (results.length > 0) {
+            const doc = results[0];
+            doc.BattleStats = new Map(Object.entries(doc.BattleStats || {}));
+            doc.PlayerInfo = new Map(Object.entries(doc.PlayerInfo || {}));
+            return [doc];
         }
+
+        return [];
+    } catch (error) {
+        console.error('Помилка пагінації:', error);
+        return [];
     }
+}
 
     async updateBattleStats(key, updates) {
         try {
