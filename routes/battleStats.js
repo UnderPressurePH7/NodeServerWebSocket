@@ -56,11 +56,14 @@ const asyncHandler = (fn) => (req, res, next) => {
     Promise.resolve(fn(req, res, next)).catch(next);
 };
 
-router.options('*', (req, res) => {
+router.use(clientCors);
+
+router.options('*', clientCors, (req, res) => {
     res.status(204).end();
 });
 
 router.post('/update-stats',
+    clientCors,
     addClientHeaders,
     logClientRequest,
     validateKey,
@@ -68,18 +71,21 @@ router.post('/update-stats',
 );
 
 router.get('/stats',
+    clientCors,
     addClientHeaders,
     validateKey,
     asyncHandler(battleStatsController.getStats)
 );
 
 router.get('/other-players',
+    clientCors,
     addClientHeaders,
     validateKey,
     asyncHandler(battleStatsController.getOtherPlayersStats)
 );
 
 router.post('/import',
+    clientCors,
     addClientHeaders,
     logClientRequest,
     validateKey,
@@ -87,24 +93,28 @@ router.post('/import',
 );
 
 router.delete('/clear',
+    clientCors,
     addClientHeaders,
     validateKey,
     asyncHandler(battleStatsController.clearStats)
 );
 
 router.delete('/battle/:battleId',
+    clientCors,
     addClientHeaders,
     validateKey,
     asyncHandler(battleStatsController.deleteBattle)
 );
 
 router.delete('/clear-database',
+    clientCors,
     addClientHeaders,
     validateSecretKey, 
     asyncHandler(battleStatsController.clearDatabase)
 );
 
 router.get('/health',
+    clientCors,
     addClientHeaders,
     (req, res) => {
         res.status(200).json(createSuccessResponse({
@@ -120,6 +130,7 @@ router.get('/health',
 );
 
 router.get('/version',
+    clientCors,
     addClientHeaders,
     (req, res) => {
         res.status(200).json(createSuccessResponse({

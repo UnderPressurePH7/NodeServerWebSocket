@@ -133,10 +133,24 @@ if (cluster.isPrimary && IS_PROD) {
   server.headersTimeout = 62000;
 
   app.use((req, res, next) => {
-    res.header('Access-Control-Allow-Origin', req.headers.origin || '*');
-    res.header('Access-Control-Allow-Methods', 'GET,PUT,POST,DELETE,OPTIONS');
-    res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, Content-Length, X-Requested-With, X-API-Key, X-Player-ID, X-Secret-Key');
+    const origin = req.headers.origin;
+    const allowedOrigins = [
+      'https://underpressureph7.github.io',
+      'http://localhost:3000',
+      'http://127.0.0.1:3000',
+      'https://localhost:3000'
+    ];
+
+    if (!origin || allowedOrigins.includes(origin)) {
+      res.header('Access-Control-Allow-Origin', origin || '*');
+    } else {
+      res.header('Access-Control-Allow-Origin', '*');
+    }
+    
+    res.header('Access-Control-Allow-Methods', 'GET,PUT,POST,DELETE,OPTIONS,PATCH');
+    res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, Content-Length, X-Requested-With, X-API-Key, X-Player-ID, X-Secret-Key, Accept, Origin');
     res.header('Access-Control-Allow-Credentials', 'false');
+    res.header('Access-Control-Max-Age', '86400');
     
     if (req.method === 'OPTIONS') {
       res.sendStatus(204);
