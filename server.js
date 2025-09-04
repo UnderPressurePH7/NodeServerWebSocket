@@ -68,10 +68,30 @@ if (cluster.isPrimary && process.env.NODE_ENV === 'production') {
       }
   }
 
-const allowedOrigins = ['https://underpressureph7.github.io'];
+  const allowedOrigins = [
+      'https://underpressureph7.github.io',
+      'http://localhost:3000',
+      'http://localhost:5500',
+      'http://127.0.0.1:5500'
+  ];
 
-  const serverCorsOptions = {
-      origin: true,
+  const httpCorsOptions = {
+      origin: (origin, callback) => {
+          if (!origin) {
+              return callback(null, true);
+          }
+          
+          if (process.env.NODE_ENV !== 'production') {
+              return callback(null, true);
+          }
+          
+          if (allowedOrigins.includes(origin)) {
+              callback(null, true);
+          } else {
+              console.warn(`CORS blocked origin: ${origin}`);
+              callback(new Error('Not allowed by CORS'));
+          }
+      },
       methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
       allowedHeaders: ['Content-Type', 'X-Player-ID', 'X-API-Key', 'X-Secret-Key'],
       credentials: true,
@@ -80,15 +100,8 @@ const allowedOrigins = ['https://underpressureph7.github.io'];
       optionsSuccessStatus: 204
   };
 
-const httpCorsOptions = {
-    origin: (origin, callback) => {
-        if (!origin || allowedOrigins.includes(origin)) {
-            callback(null, origin); 
-        } else {
-            console.error(`CORS rejected: ${origin}`);
-            callback(new Error('Not allowed by CORS'));
-        }
-    },
+  const serverCorsOptions = {
+      origin: true,
       methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
       allowedHeaders: ['Content-Type', 'X-Player-ID', 'X-API-Key', 'X-Secret-Key'],
       credentials: true,
@@ -157,9 +170,8 @@ const httpCorsOptions = {
       parameterLimit: 1000
   }));
   
-
-    app.use(cors(httpCorsOptions));
-    app.options('*', cors(httpCorsOptions));
+  app.use(cors(httpCorsOptions));
+  app.options('*', cors(httpCorsOptions));
 
   const sendErrorResponse = (res, error) => {
       const isDev = process.env.NODE_ENV === 'development';
@@ -249,6 +261,17 @@ const httpCorsOptions = {
   });
 
   app.use((error, req, res, next) => {
+      if (error && error.message === 'Not allowed by CORS') {
+          return res.status(403).json({
+              success: false,
+              error: {
+                  code: 'CORS_ERROR',
+                  message: 'CORS policy violation',
+                  origin: req.headers.origin
+              }
+          });
+      }
+      
       if (process.env.NODE_ENV !== 'production') console.error('Error:', error);
       if (error.name === 'CorsError') return sendErrorResponse(res, new ValidationError('CORS policy violation'));
       if (error.type === 'entity.parse.failed') return sendErrorResponse(res, new ValidationError('Invalid JSON payload'));
