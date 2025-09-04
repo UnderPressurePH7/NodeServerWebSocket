@@ -28,7 +28,8 @@ const battleStatsController = {
             });
         }
 
-        const key = req.params.key;
+        // const key = req.params.key;
+        const key = req.apiKey;
         const playerId = req.headers['x-player-id'];
 
         console.log('🔍 Параметри запиту:', {
