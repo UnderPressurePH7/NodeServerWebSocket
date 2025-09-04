@@ -54,12 +54,21 @@ const BattleStatsSchema = new mongoose.Schema({
 BattleStatsSchema.pre('save', function() {
     if (this.BattleStats instanceof Map) {
         this.markModified('BattleStats');
-        for (const [battleId] of this.BattleStats) {
+        for (const [battleId, battle] of this.BattleStats) {
             this.markModified(`BattleStats.${battleId}`);
+            if (battle && battle.players instanceof Map) {
+                this.markModified(`BattleStats.${battleId}.players`);
+                for (const [playerId] of battle.players) {
+                    this.markModified(`BattleStats.${battleId}.players.${playerId}`);
+                }
+            }
         }
     }
     if (this.PlayerInfo instanceof Map) {
         this.markModified('PlayerInfo');
+        for (const [playerId] of this.PlayerInfo) {
+            this.markModified(`PlayerInfo.${playerId}`);
+        }
     }
 });
 

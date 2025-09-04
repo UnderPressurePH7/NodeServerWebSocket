@@ -78,9 +78,18 @@ class BattleStatsService {
 
     parseValue(value) {
         if (value && typeof value === 'object') {
-            if (value.$numberDouble) return parseFloat(value.$numberDouble);
-            if (value.$numberInt) return parseInt(value.$numberInt);
-            if (value.$numberLong) return parseInt(value.$numberLong);
+            if (value.$numberDouble) {
+                const parsed = parseFloat(value.$numberDouble);
+                return isNaN(parsed) ? 0 : parsed;
+            }
+            if (value.$numberInt) {
+                const parsed = parseInt(value.$numberInt);
+                return isNaN(parsed) ? 0 : parsed;
+            }
+            if (value.$numberLong) {
+                const parsed = Number(value.$numberLong);
+                return isNaN(parsed) ? 0 : parsed;
+            }
             return value;
         }
         return value;

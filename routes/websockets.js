@@ -1,4 +1,4 @@
-const { validateKeySocket, validateSecretKeySocket, createSession, cleanupSession, authenticateSocketMessage, redisClient } = require('../middleware/auth');
+const { validateKeySocket, validateSecretKeySocket, createSession, cleanupSession, authenticateSocketMessage } = require('../middleware/auth');
 const battleStatsService = require('../services/battleStatsService');
 const { queue, isQueueFull } = require('../config/queue');
 const metrics = require('../config/metrics');
@@ -7,6 +7,12 @@ const RATE_LIMIT_MAX = 100;
 const RATE_LIMIT_TTL = 30;
 const MAX_PAYLOAD_SIZE = 2 * 1024 * 1024;
 
+let redisClient;
+
+const setRedisClient = (client) => {
+    redisClient = client;
+};
+
 class WebSocketHandler {
     constructor(io) {
         this.io = io;
@@ -14,27 +20,47 @@ class WebSocketHandler {
         setInterval(() => this.cleanupDeadClients(), 300000);
     }
 
-    cleanupDeadClients() {
+    async cleanupDeadClients() {
         if (!this.io) return;
-        const connectedSocketIds = new Set(Object.keys(this.io.sockets.sockets));
-        for (const socketId of this.connectedClients.keys()) {
-            if (!connectedSocketIds.has(socketId)) {
-                this.connectedClients.delete(socketId);
-                cleanupSession(socketId);
+        
+        try {
+            const connectedSocketIds = new Set(Object.keys(this.io.sockets.sockets));
+            const cleanupPromises = [];
+            
+            for (const socketId of this.connectedClients.keys()) {
+                if (!connectedSocketIds.has(socketId)) {
+                    this.connectedClients.delete(socketId);
+                    cleanupPromises.push(cleanupSession(socketId));
+                }
             }
+            
+            await Promise.allSettled(cleanupPromises);
+        } catch (error) {
+            console.error('Помилка при очищенні клієнтів:', error);
         }
     }
 
     async checkRateLimit(socketId, key, playerId) {
-        if (!redisClient.isOpen) return true;
-        const rateLimitKey = `rate-limit-ws:${socketId}:${key}:${playerId || 'anonymous'}`;
-        const count = await redisClient.incr(rateLimitKey);
-        if (count === 1) await redisClient.expire(rateLimitKey, RATE_LIMIT_TTL);
-        return count <= RATE_LIMIT_MAX;
+        try {
+            if (!redisClient || !redisClient.isOpen) return true;
+            const rateLimitKey = `rate-limit-ws:${socketId}:${key}:${playerId || 'anonymous'}`;
+            const count = await redisClient.incr(rateLimitKey);
+            if (count === 1) await redisClient.expire(rateLimitKey, RATE_LIMIT_TTL);
+            return count <= RATE_LIMIT_MAX;
+        } catch (error) {
+            console.error('Помилка WebSocket rate limiting:', error);
+            return true;
+        }
     }
 
     checkPayloadSize(data) {
-        return JSON.stringify(data).length <= MAX_PAYLOAD_SIZE;
+        try {
+            const size = JSON.stringify(data).length;
+            return size <= MAX_PAYLOAD_SIZE;
+        } catch (error) {
+            console.error('Помилка при перевірці розміру payload:', error);
+            return false;
+        }
     }
 
     sendError(callback, status, message, error = null) {
@@ -102,10 +128,11 @@ class WebSocketHandler {
                         this.io.to(`stats_${roomKey}`).emit('statsUpdated', { key: roomKey, playerId: data.playerId, timestamp: Date.now() });
                     } else {
                         metrics.failedRequests++;
+                        socket.emit('updateError', { key: roomKey, playerId: data.playerId, error: 'Обробка не вдалася', timestamp: Date.now() });
                     }
                 } catch (error) {
                     metrics.failedRequests++;
-                    socket.emit('updateError', { key: data.key, playerId: data.playerId, error: error.message, timestamp: Date.now() });
+                    socket.emit('updateError', { key: roomKey, playerId: data.playerId, error: error.message, timestamp: Date.now() });
                 }
             });
         } catch (error) {
@@ -258,7 +285,11 @@ async function authenticateSocket(socket, next) {
     return next(new Error('Невалідний API ключ або секретний ключ'));
 }
 
-function initializeWebSocket(io) {
+function initializeWebSocket(io, redisClientInstance) {
+    if (redisClientInstance) {
+        setRedisClient(redisClientInstance);
+    }
+    
     battleStatsService.setIo(io);
     const wsHandler = new WebSocketHandler(io);
     io.use(authenticateSocket);

@@ -21,15 +21,24 @@ const extractSecretKey = (req) => {
 };
 
 const checkRateLimit = async (key, identifier) => {
-    if (!redisClient || !redisClient.isOpen) return true;
-    const rateLimitKey = `rate-limit:${key}:${identifier}`;
-    const attempts = await redisClient.incr(rateLimitKey);
-    
-    if (attempts === 1) {
-        await redisClient.expire(rateLimitKey, RATE_LIMIT_TTL);
+    try {
+        if (!redisClient || !redisClient.isOpen) {
+            console.warn('Redis недоступний - пропускаємо rate limiting');
+            return true;
+        }
+        
+        const rateLimitKey = `rate-limit:${key}:${identifier}`;
+        const attempts = await redisClient.incr(rateLimitKey);
+        
+        if (attempts === 1) {
+            await redisClient.expire(rateLimitKey, RATE_LIMIT_TTL);
+        }
+        
+        return attempts <= RATE_LIMIT_MAX;
+    } catch (error) {
+        console.error('Помилка rate limiting:', error);
+        return true;
     }
-    
-    return attempts <= RATE_LIMIT_MAX;
 };
 
 const validateKey = async (req, res, next) => {
@@ -106,43 +115,57 @@ const validateSecretKeySocket = (secretKey) => {
 };
 
 const createSession = async (socketId, key, playerId) => {
-    if (!redisClient || !redisClient.isOpen) return null;
-    const sessionId = `session:${socketId}`;
-    const session = {
-        socketId,
-        key,
-        playerId: playerId || 'anonymous',
-        createdAt: Date.now().toString(),
-        lastActivity: Date.now().toString()
-    };
-    
-    await redisClient.hSet(sessionId, session);
-    await redisClient.expire(sessionId, SESSION_TTL);
-    return sessionId;
+    try {
+        if (!redisClient || !redisClient.isOpen) return null;
+        const sessionId = `session:${socketId}`;
+        const session = {
+            socketId,
+            key,
+            playerId: playerId || 'anonymous',
+            createdAt: Date.now().toString(),
+            lastActivity: Date.now().toString()
+        };
+        
+        await redisClient.hSet(sessionId, session);
+        await redisClient.expire(sessionId, SESSION_TTL);
+        return sessionId;
+    } catch (error) {
+        console.error('Помилка створення сесії:', error);
+        return null;
+    }
 };
 
 const validateSession = async (socketId, key, playerId) => {
-    if (!redisClient || !redisClient.isOpen) return true;
-    const sessionId = `session:${socketId}`;
-    const session = await redisClient.hGetAll(sessionId);
-    
-    if (!session || Object.keys(session).length === 0) {
-        return false;
+    try {
+        if (!redisClient || !redisClient.isOpen) return true;
+        const sessionId = `session:${socketId}`;
+        const session = await redisClient.hGetAll(sessionId);
+        
+        if (!session || Object.keys(session).length === 0) {
+            return false;
+        }
+        
+        if (session.socketId !== socketId || session.key !== key) {
+            return false;
+        }
+        
+        await redisClient.hSet(sessionId, 'lastActivity', Date.now().toString());
+        await redisClient.expire(sessionId, SESSION_TTL);
+        return true;
+    } catch (error) {
+        console.error('Помилка валідації сесії:', error);
+        return true;
     }
-    
-    if (session.socketId !== socketId || session.key !== key) {
-        return false;
-    }
-    
-    await redisClient.hSet(sessionId, 'lastActivity', Date.now().toString());
-    await redisClient.expire(sessionId, SESSION_TTL);
-    return true;
 };
 
 const cleanupSession = async (socketId) => {
-    if (!redisClient || !redisClient.isOpen) return;
-    const sessionId = `session:${socketId}`;
-    await redisClient.del(sessionId);
+    try {
+        if (!redisClient || !redisClient.isOpen) return;
+        const sessionId = `session:${socketId}`;
+        await redisClient.del(sessionId);
+    } catch (error) {
+        console.error('Помилка очищення сесії:', error);
+    }
 };
 
 const authenticateSocketMessage = async (socket, data) => {
@@ -178,5 +201,6 @@ module.exports = {
     cleanupSession,
     authenticateSocketMessage,
     extractApiKey,
-    extractSecretKey
+    extractSecretKey,
+    redisClient
 };

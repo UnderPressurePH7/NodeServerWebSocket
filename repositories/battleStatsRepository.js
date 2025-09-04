@@ -21,35 +21,67 @@ class BattleStatsRepository {
     async getPaginatedBattles(key, page = 1, limit = 10) {
         const skip = (page - 1) * limit;
         
-        const fullDoc = await BattleStats.findById(key);
-        if (!fullDoc) {
-            return [];
+        try {
+            const battleIds = await BattleStats.aggregate([
+                { $match: { _id: key } },
+                { $project: { battles: { $objectToArray: "$BattleStats" } }},
+                { $unwind: "$battles" },
+                { $sort: { "battles.v.startTime": -1 } },
+                { $skip: skip },
+                { $limit: limit },
+                { $project: { battleId: "$battles.k" } }
+            ]);
+            
+            if (battleIds.length === 0) return [];
+            
+            const fullDoc = await BattleStats.findById(key);
+            if (!fullDoc) return [];
+            
+            const result = [{
+                _id: key,
+                BattleStats: new Map(),
+                PlayerInfo: fullDoc.PlayerInfo
+            }];
+            
+            battleIds.forEach(({ battleId }) => {
+                if (fullDoc.BattleStats.has && fullDoc.BattleStats.has(battleId)) {
+                    result[0].BattleStats.set(battleId, fullDoc.BattleStats.get(battleId));
+                } else if (fullDoc.BattleStats[battleId]) {
+                    result[0].BattleStats.set(battleId, fullDoc.BattleStats[battleId]);
+                }
+            });
+            
+            return result;
+        } catch (error) {
+            console.error('Помилка пагінації:', error);
+            const fullDoc = await this.findByKey(key);
+            if (!fullDoc) return [];
+            
+            const result = await BattleStats.aggregate([
+                { $match: { _id: key } },
+                { $project: {
+                    battles: { $objectToArray: "$BattleStats" }
+                }},
+                { $unwind: "$battles" },
+                { $sort: { "battles.v.startTime": -1 } },
+                { $skip: skip },
+                { $limit: limit },
+                { $group: {
+                    _id: "$_id",
+                    BattleStats: { $push: "$battles" }
+                }},
+                { $project: {
+                    _id: 1,
+                    BattleStats: { $arrayToObject: "$BattleStats" }
+                }}
+            ]);
+
+            if (result.length > 0) {
+                result[0].PlayerInfo = fullDoc.PlayerInfo;
+            }
+
+            return result;
         }
-
-        const result = await BattleStats.aggregate([
-            { $match: { _id: key } },
-            { $project: {
-                battles: { $objectToArray: "$BattleStats" }
-            }},
-            { $unwind: "$battles" },
-            { $sort: { "battles.v.startTime": -1 } },
-            { $skip: skip },
-            { $limit: limit },
-            { $group: {
-                _id: "$_id",
-                BattleStats: { $push: "$battles" }
-            }},
-            { $project: {
-                _id: 1,
-                BattleStats: { $arrayToObject: "$BattleStats" }
-            }}
-        ]);
-
-        if (result.length > 0) {
-            result[0].PlayerInfo = fullDoc.PlayerInfo;
-        }
-
-        return result;
     }
 
     async updateBattleStats(key, updates) {

@@ -9,7 +9,7 @@ const { Server } = require('socket.io');
 const { createClient } = require('redis');
 const { createAdapter } = require('@socket.io/redis-adapter');
 const connectDB = require('./config/database');
-const queue = require('./config/queue');
+const { queue, gracefulShutdown } = require('./config/queue');
 const metrics = require('./config/metrics');
 const { initializeWebSocket } = require('./routes/websockets');
 const battleStatsRoutes = require('./routes/battleStats');     
@@ -60,12 +60,10 @@ if (cluster.isPrimary && IS_PROD) {
   const app = express();
   const server = http.createServer(app);
 
-
   const io = new Server(server, {
     cors: {
       origin: (origin, cb) => {
         if (!origin || !IS_PROD) return cb(null, true);
-        // якщо хочеш жорстку перевірку origin для WS — додай свій allowlist тут
         return cb(null, true);
       },
       methods: ['GET', 'POST'],
@@ -188,6 +186,40 @@ if (cluster.isPrimary && IS_PROD) {
     }
   });
 
+  app.get('/api/health/detailed', async (req, res) => {
+    const health = {
+      status: 'ok',
+      timestamp: new Date().toISOString(),
+      uptime: Math.floor(process.uptime()),
+      memory: process.memoryUsage(),
+      connections: {
+        websocket: io?.engine?.clientsCount || 0
+      },
+      database: {
+        status: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected',
+        host: mongoose.connection.host
+      },
+      redis: {
+        status: redisClient?.isOpen ? 'connected' : 'disconnected'
+      },
+      queue: {
+        size: queue?.size || 0,
+        pending: queue?.pending || 0,
+        isPaused: queue?.isPaused || false
+      }
+    };
+    
+    const overallStatus = (
+      health.database.status === 'connected' && 
+      health.queue.size < 1000
+    ) ? 'healthy' : 'unhealthy';
+    
+    res.status(overallStatus === 'healthy' ? 200 : 503).json({
+      ...health,
+      status: overallStatus
+    });
+  });
+
   app.get('/api/queue-status', (req, res) => {
     const successRate =
       metrics.totalRequests > 0
@@ -212,9 +244,7 @@ if (cluster.isPrimary && IS_PROD) {
   app.use('/api/battle-stats', battleStatsRoutes);
   app.use('/api/server', serverBattleStatsRoutes); 
 
-  // 404
   app.use((req, res, next) => next(new NotFoundError(`Route ${req.method} ${req.path} not found`)));
-
 
   app.use((error, req, res, next) => {
     if (!IS_PROD) console.error('❌ Error:', error);
@@ -222,7 +252,7 @@ if (cluster.isPrimary && IS_PROD) {
     sendError(res, error);
   });
 
-  initializeWebSocket(io);
+  initializeWebSocket(io, redisClient);
 
   const start = async () => {
     try {
@@ -238,9 +268,29 @@ if (cluster.isPrimary && IS_PROD) {
 
   start();
 
-  const graceful = async (signal) => {
+  const gracefulServerShutdown = async (signal) => {
     console.log(`🔻 Signal ${signal} received in worker ${process.pid}. Shutting down...`);
+    
     server.close(async () => {
+      console.log('HTTP сервер зупинено');
+      
+      try {
+        if (queue && typeof queue.onIdle === 'function') {
+          await Promise.race([
+            queue.onIdle(),
+            new Promise(resolve => setTimeout(resolve, 5000))
+          ]);
+        }
+      } catch (e) {
+        console.warn('Queue shutdown timeout:', e?.message);
+      }
+      
+      try {
+        await gracefulShutdown();
+      } catch (e) {
+        console.warn('Queue graceful shutdown error:', e?.message);
+      }
+      
       try {
         await mongoose.disconnect();
         console.log('✅ MongoDB disconnected.');
@@ -259,10 +309,15 @@ if (cluster.isPrimary && IS_PROD) {
       if (cluster.worker) cluster.worker.disconnect?.();
       process.exit(0);
     });
+    
+    setTimeout(() => {
+      console.error('Примусове завершення через тайм-аут');
+      process.exit(1);
+    }, 10000);
   };
 
-  process.on('SIGTERM', () => graceful('SIGTERM'));
-  process.on('SIGINT', () => graceful('SIGINT'));
+  process.on('SIGTERM', () => gracefulServerShutdown('SIGTERM'));
+  process.on('SIGINT', () => gracefulServerShutdown('SIGINT'));
 
   process.on('unhandledRejection', (reason) => {
     console.error('UNHANDLED REJECTION:', reason);
