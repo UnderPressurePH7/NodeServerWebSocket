@@ -43,7 +43,6 @@ class BattleStatsService {
             const updates = { $set: {}, $unset: {} };
             let modified = false;
 
-            // Обробка PlayerInfo
             if (incomingPlayerInfo) {
                 console.log('🔄 Початок обробки PlayerInfo...');
                 let playerInfoProcessed = 0;
@@ -77,7 +76,6 @@ class BattleStatsService {
                 console.log(`📈 PlayerInfo обробка завершена: ${playerInfoProcessed} записів оброблено`);
             }
 
-            // Обробка BattleStats
             if (incomingBattleStats) {
                 console.log('🔄 Початок обробки BattleStats...');
                 let battleStatsProcessed = 0;
@@ -99,7 +97,6 @@ class BattleStatsService {
                         
                         console.log(`📊 Санітизовані дані бою ${arenaId}:`, sanitizedBattle);
                         
-                        // Зберігаємо основні поля бою
                         updates.$set[`BattleStats.${arenaId}.startTime`] = sanitizedBattle.startTime;
                         updates.$set[`BattleStats.${arenaId}.duration`] = sanitizedBattle.duration;
                         updates.$set[`BattleStats.${arenaId}.win`] = sanitizedBattle.win;
@@ -107,7 +104,6 @@ class BattleStatsService {
 
                         console.log(`💾 Додано основні поля бою ${arenaId} до updates`);
 
-                        // Обробка гравців у бою
                         if (battleSource.players) {
                             console.log(`🔄 Обробка гравців у бою ${arenaId}, кількість: ${Object.keys(battleSource.players).length}`);
                             let playersProcessed = 0;
@@ -244,6 +240,16 @@ class BattleStatsService {
 
         let statsDoc;
         try {
+            console.log('🔍 Перевіряємо, що зберігається в БД...');
+            const rawData = await battleStatsRepository.getStatsRaw(key);
+            console.log('📊 Сирі дані з БД:', {
+                hasRawData: !!rawData,
+                rawBattleStatsType: rawData ? typeof rawData.BattleStats : 'none',
+                rawPlayerInfoType: rawData ? typeof rawData.PlayerInfo : 'none',
+                rawBattleStatsKeys: rawData && rawData.BattleStats ? Object.keys(rawData.BattleStats) : [],
+                rawPlayerInfoKeys: rawData && rawData.PlayerInfo ? Object.keys(rawData.PlayerInfo) : []
+            });
+
             if (limit === 0) {
                 console.log('📊 Отримуємо всі дані (limit = 0)');
                 statsDoc = await battleStatsRepository.findByKey(key);
@@ -256,7 +262,10 @@ class BattleStatsService {
             console.log('📊 Результат з репозиторію:', {
                 hasStatsDoc: !!statsDoc,
                 statsDocType: typeof statsDoc,
-                statsDocKeys: statsDoc ? Object.keys(statsDoc) : []
+                battleStatsType: statsDoc ? typeof statsDoc.BattleStats : 'none',
+                playerInfoType: statsDoc ? typeof statsDoc.PlayerInfo : 'none',
+                battleStatsIsMap: statsDoc ? statsDoc.BattleStats instanceof Map : false,
+                playerInfoIsMap: statsDoc ? statsDoc.PlayerInfo instanceof Map : false
             });
 
             if (!statsDoc) {
@@ -271,14 +280,29 @@ class BattleStatsService {
             console.log('🔧 Забезпечуємо структуру Map...');
             DataTransformer.ensureMapStructure(statsDoc);
             
+            console.log('📊 Після ensureMapStructure:', {
+                battleStatsIsMap: statsDoc.BattleStats instanceof Map,
+                playerInfoIsMap: statsDoc.PlayerInfo instanceof Map,
+                battleStatsSize: statsDoc.BattleStats instanceof Map ? statsDoc.BattleStats.size : Object.keys(statsDoc.BattleStats || {}).length,
+                playerInfoSize: statsDoc.PlayerInfo instanceof Map ? statsDoc.PlayerInfo.size : Object.keys(statsDoc.PlayerInfo || {}).length
+            });
+            
             console.log('🔧 Конвертуємо Maps у Objects...');
             const { cleanBattleStats, cleanPlayerInfo } = DataTransformer.convertMapsToObjects(statsDoc);
 
-            console.log('✅ Результат getStats:', {
+            console.log('✅ Результат після convertMapsToObjects:', {
                 cleanBattleStatsKeys: Object.keys(cleanBattleStats),
                 cleanPlayerInfoKeys: Object.keys(cleanPlayerInfo),
                 battleStatsCount: Object.keys(cleanBattleStats).length,
-                playerInfoCount: Object.keys(cleanPlayerInfo).length
+                playerInfoCount: Object.keys(cleanPlayerInfo).length,
+                sampleBattleStats: Object.keys(cleanBattleStats).slice(0, 3).map(key => ({
+                    id: key,
+                    data: cleanBattleStats[key]
+                })),
+                samplePlayerInfo: Object.keys(cleanPlayerInfo).slice(0, 3).map(key => ({
+                    id: key,
+                    data: cleanPlayerInfo[key]
+                }))
             });
 
             const result = {
@@ -298,6 +322,41 @@ class BattleStatsService {
                 stack: error.stack,
                 timestamp: new Date().toISOString()
             });
+            throw error;
+        }
+    }
+
+    async diagnoseData(key) {
+        console.log('🔬 Діагностика даних для ключа:', key);
+        
+        try {
+            const rawData = await battleStatsRepository.getStatsRaw(key);
+            console.log('1️⃣ Сирі дані:', rawData);
+            
+            const foundData = await battleStatsRepository.findByKey(key);
+            console.log('2️⃣ Знайдені дані:', {
+                hasFound: !!foundData,
+                battleStatsType: foundData ? typeof foundData.BattleStats : 'none',
+                playerInfoType: foundData ? typeof foundData.PlayerInfo : 'none'
+            });
+            
+            const paginatedData = await battleStatsRepository.getPaginatedBattles(key, 1, 10);
+            console.log('3️⃣ Пагіновані дані:', {
+                hasPaginated: paginatedData.length > 0,
+                paginatedLength: paginatedData.length,
+                firstResult: paginatedData[0] ? {
+                    battleStatsType: typeof paginatedData[0].BattleStats,
+                    playerInfoType: typeof paginatedData[0].PlayerInfo
+                } : null
+            });
+            
+            return {
+                rawData,
+                foundData: !!foundData,
+                paginatedData: paginatedData.length > 0
+            };
+        } catch (error) {
+            console.error('❌ Помилка діагностики:', error);
             throw error;
         }
     }
@@ -325,33 +384,61 @@ class BattleStatsService {
             let totalBattles = 0;
             let filteredBattles = 0;
 
-            statsDoc.BattleStats.forEach((battle, battleId) => {
-                totalBattles++;
-                const otherPlayersData = {};
-                let hasOtherPlayers = false;
+            if (statsDoc.BattleStats instanceof Map) {
+                statsDoc.BattleStats.forEach((battle, battleId) => {
+                    totalBattles++;
+                    const otherPlayersData = {};
+                    let hasOtherPlayers = false;
 
-                const playersMap = (battle.players instanceof Map)
-                    ? battle.players
-                    : new Map(Object.entries(battle.players || {}));
+                    const playersMap = (battle.players instanceof Map)
+                        ? battle.players
+                        : new Map(Object.entries(battle.players || {}));
 
-                playersMap.forEach((playerData, pid) => {
-                    if (pid !== excludePlayerId) {
-                        otherPlayersData[pid] = playerData;
-                        hasOtherPlayers = true;
+                    playersMap.forEach((playerData, pid) => {
+                        if (pid !== excludePlayerId) {
+                            otherPlayersData[pid] = playerData;
+                            hasOtherPlayers = true;
+                        }
+                    });
+
+                    if (hasOtherPlayers) {
+                        cleanBattleStats[battleId] = {
+                            startTime: battle.startTime,
+                            duration: battle.duration,
+                            win: battle.win,
+                            mapName: battle.mapName,
+                            players: otherPlayersData
+                        };
+                        filteredBattles++;
                     }
                 });
+            } else if (statsDoc.BattleStats && typeof statsDoc.BattleStats === 'object') {
+                Object.entries(statsDoc.BattleStats).forEach(([battleId, battle]) => {
+                    totalBattles++;
+                    const otherPlayersData = {};
+                    let hasOtherPlayers = false;
 
-                if (hasOtherPlayers) {
-                    cleanBattleStats[battleId] = {
-                        startTime: battle.startTime,
-                        duration: battle.duration,
-                        win: battle.win,
-                        mapName: battle.mapName,
-                        players: otherPlayersData
-                    };
-                    filteredBattles++;
-                }
-            });
+                    if (battle && battle.players) {
+                        Object.entries(battle.players).forEach(([pid, playerData]) => {
+                            if (pid !== excludePlayerId) {
+                                otherPlayersData[pid] = playerData;
+                                hasOtherPlayers = true;
+                            }
+                        });
+                    }
+
+                    if (hasOtherPlayers) {
+                        cleanBattleStats[battleId] = {
+                            startTime: battle.startTime,
+                            duration: battle.duration,
+                            win: battle.win,
+                            mapName: battle.mapName,
+                            players: otherPlayersData
+                        };
+                        filteredBattles++;
+                    }
+                });
+            }
 
             console.log('✅ getOtherPlayersStats завершено:', {
                 totalBattles: totalBattles,
@@ -407,7 +494,7 @@ class BattleStatsService {
             if (PlayerInfo && typeof PlayerInfo === 'object') {
                 let playerInfoImported = 0;
                 Object.entries(PlayerInfo).forEach(([playerId, nickname]) => {
-                    statsDoc.PlayerInfo.set(playerId, nickname);
+                    statsDoc.PlayerInfo.set(playerId, { _id: nickname });
                     playerInfoImported++;
                     console.log(`✅ PlayerInfo імпортовано: ${playerId} -> ${nickname}`);
                 });
