@@ -31,7 +31,12 @@ const VALID_KEYS = [
     'fd7n2v',
     'jtv',
     'test',
-    'dev-test'
+    'dev-test',
+    
+    'Bizzord',
+    'YKP_BOIH',
+    'Vgosti',
+    'Palu4'
 ];
 
 module.exports = VALID_KEYS;
