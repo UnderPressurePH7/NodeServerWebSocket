@@ -130,7 +130,20 @@ if (cluster.isPrimary && IS_PROD) {
 
   server.setTimeout(30000);        
   server.keepAliveTimeout = 61000;  
-  server.headersTimeout = 62000;    
+  server.headersTimeout = 62000;
+
+  app.use((req, res, next) => {
+    res.header('Access-Control-Allow-Origin', req.headers.origin || '*');
+    res.header('Access-Control-Allow-Methods', 'GET,PUT,POST,DELETE,OPTIONS');
+    res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, Content-Length, X-Requested-With, X-API-Key, X-Player-ID, X-Secret-Key');
+    res.header('Access-Control-Allow-Credentials', 'false');
+    
+    if (req.method === 'OPTIONS') {
+      res.sendStatus(204);
+    } else {
+      next();
+    }
+  });    
 
   const sendSuccess = (res, data = {}, status = 200) => {
     res.status(status).json({

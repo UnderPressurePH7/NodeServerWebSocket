@@ -6,7 +6,6 @@ const battleStatsController = require('../controllers/battleStatsController');
 const { version, name } = require('../package.json');
 
 router.use(clientCors);
-router.options('*', clientCors);
 
 const createErrorResponse = (error, req) => ({
     error: error.name || 'Unknown Error',
@@ -26,6 +25,9 @@ const createSuccessResponse = (data, meta = {}) => ({
 });
 
 const logClientRequest = (req, res, next) => {
+    if (req.method === 'OPTIONS') {
+        return next();
+    }
     const bodySize = Buffer.byteLength(JSON.stringify(req.body || {}), 'utf8');
     console.log(`CLIENT API ${req.method} ${req.originalUrl}`);
     console.log(`Data size: ${bodySize} bytes`);
@@ -54,7 +56,9 @@ const asyncHandler = (fn) => (req, res, next) => {
     Promise.resolve(fn(req, res, next)).catch(next);
 };
 
-// === ROUTES ===
+router.options('*', (req, res) => {
+    res.status(204).end();
+});
 
 router.post('/update-stats',
     addClientHeaders,
