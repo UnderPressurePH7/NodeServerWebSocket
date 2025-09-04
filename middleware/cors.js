@@ -1,4 +1,6 @@
-const simpleCors = (req, res, next) => {
+const cors = require('cors');
+
+const clientCors = (req, res, next) => {
     const origin = req.headers.origin;
     const allowedOrigins = [
         'https://underpressureph7.github.io',
@@ -25,4 +27,18 @@ const simpleCors = (req, res, next) => {
     next();
 };
 
-module.exports = { clientCors: simpleCors, serverCors: simpleCors };
+const serverCors = (req, res, next) => {
+    res.header('Access-Control-Allow-Origin', '*');
+    res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS, PATCH');
+    res.header('Access-Control-Allow-Headers', 'Content-Type, X-API-Key, X-Player-ID, X-Secret-Key, Authorization, Accept, Origin, X-Requested-With');
+    res.header('Access-Control-Allow-Credentials', 'false');
+    res.header('Access-Control-Max-Age', '86400');
+    
+    if (req.method === 'OPTIONS') {
+        return res.status(204).end();
+    }
+    
+    next();
+};
+
+module.exports = { clientCors, serverCors };
