@@ -3,9 +3,9 @@ const battleStatsService = require('../services/battleStatsService');
 const { queue, isQueueFull } = require('../config/queue');
 const metrics = require('../config/metrics');
 
-const RATE_LIMIT_MAX = 100;
-const RATE_LIMIT_TTL = 30;
-const MAX_PAYLOAD_SIZE = 2 * 1024 * 1024;
+const RATE_LIMIT_MAX = 500;
+const RATE_LIMIT_TTL = 20;
+const MAX_PAYLOAD_SIZE = 5 * 1024 * 1024;
 
 let redisClient;
 
@@ -144,7 +144,7 @@ class WebSocketHandler {
         if (!await this.validateRequest(socket, data, callback)) return;
         try {
             const page = parseInt(data.page) || 1;
-            const limit = data.limit !== undefined ? parseInt(data.limit) : 10;
+            const limit = data.limit !== undefined ? parseInt(data.limit) : 100;
             const result = await battleStatsService.getStats(socket.authKey, page, limit);
             this.sendSuccess(callback, result);
         } catch (error) {
