@@ -6,14 +6,14 @@ const helmet = require('helmet');
 const compression = require('compression');
 const mongoose = require('mongoose');
 const { Server } = require('socket.io');
-const { createClient } = require('redis');
 const { createAdapter } = require('@socket.io/redis-adapter');
 const connectDB = require('./config/database');
 const { queue, gracefulShutdown } = require('./config/queue');
 const metrics = require('./config/metrics');
 const { initializeWebSocket } = require('./routes/websockets');
 const battleStatsRoutes = require('./routes/battleStats');     
-const serverBattleStatsRoutes = require('./routes/serverBattleStats'); 
+const serverBattleStatsRoutes = require('./routes/serverBattleStats');
+const RedisConnectionPool = require('./config/redisPool');
 
 const { version } = require('./package.json');
 const { setRedisClient } = require('./middleware/auth');
@@ -76,32 +76,35 @@ if (cluster.isPrimary && IS_PROD) {
   });
 
   const redisUrl = process.env.REDISCLOUD_URL || process.env.REDIS_URL || null;
-  let redisClient = null;
-  let subClient = null;
+  let redisPool = null;
+  let primaryClient = null;
 
   (async () => {
     try {
       if (!redisUrl) {
         console.warn('ℹ️  Redis URL not set. Running Socket.IO without cluster adapter.');
       } else {
-        redisClient = createClient({ url: redisUrl });
-        subClient = redisClient.duplicate();
-        await Promise.all([redisClient.connect(), subClient.connect()]);
-        io.adapter(createAdapter(redisClient, subClient));
+        redisPool = new RedisConnectionPool(redisUrl, 5);
+        await redisPool.init();
+        
+        primaryClient = await redisPool.acquire();
+        const subClient = await redisPool.acquire();
+        
+        io.adapter(createAdapter(primaryClient, subClient));
         console.log(`🔌 Socket.IO Redis adapter connected in worker ${process.pid}.`);
-        setRedisClient(redisClient); 
+        setRedisClient(primaryClient);
       }
     } catch (err) {
       console.error(`❌ Failed to init Redis adapter in worker ${process.pid}:`, err);
     }
   })();
 
-  app.set('trust proxy', 1); 
+  app.set('trust proxy', 1);
   app.disable('x-powered-by');
 
   app.use(
     helmet({
-      contentSecurityPolicy: false 
+      contentSecurityPolicy: false
     })
   );
 
@@ -128,8 +131,8 @@ if (cluster.isPrimary && IS_PROD) {
     })
   );
 
-  server.setTimeout(30000);        
-  server.keepAliveTimeout = 61000;  
+  server.setTimeout(30000);
+  server.keepAliveTimeout = 61000;
   server.headersTimeout = 62000;
 
   const sendSuccess = (res, data = {}, status = 200) => {
@@ -200,7 +203,8 @@ if (cluster.isPrimary && IS_PROD) {
         host: mongoose.connection.host
       },
       redis: {
-        status: redisClient?.isOpen ? 'connected' : 'disconnected'
+        status: primaryClient?.isOpen ? 'connected' : 'disconnected',
+        pool: redisPool ? redisPool.getStats() : null
       },
       queue: {
         size: queue?.size || 0,
@@ -242,7 +246,7 @@ if (cluster.isPrimary && IS_PROD) {
   });
 
   app.use('/api/battle-stats', battleStatsRoutes);
-  app.use('/api/server', serverBattleStatsRoutes); 
+  app.use('/api/server', serverBattleStatsRoutes);
 
   app.use((req, res, next) => next(new NotFoundError(`Route ${req.method} ${req.path} not found`)));
 
@@ -252,7 +256,7 @@ if (cluster.isPrimary && IS_PROD) {
     sendError(res, error);
   });
 
-  initializeWebSocket(io, redisClient);
+  initializeWebSocket(io, primaryClient);
 
   const start = async () => {
     try {
@@ -299,9 +303,10 @@ if (cluster.isPrimary && IS_PROD) {
       }
 
       try {
-        if (redisClient?.isOpen) await redisClient.quit();
-        if (subClient?.isOpen) await subClient.quit();
-        console.log('✅ Redis clients disconnected.');
+        if (redisPool) {
+          await redisPool.destroy();
+          console.log('✅ Redis pool disconnected.');
+        }
       } catch (e) {
         console.warn('Redis disconnect error:', e?.message);
       }

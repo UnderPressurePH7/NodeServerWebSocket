@@ -10,10 +10,21 @@ class BattleStatsService {
         this.updateTimeouts = new Map();
         this.batchSize = 100;
         this.batchDelay = 200;
+        this.maxPendingTime = 10000;
+        this.cleanupInterval = setInterval(() => this.cleanupStaleUpdates(), 30000);
     }
 
     setIo(io) {
         notificationService.setIo(io);
+    }
+
+    cleanupStaleUpdates() {
+        const now = Date.now();
+        for (const [key, updates] of this.pendingUpdates) {
+            if (updates.length > 0 && updates[0].timestamp && (now - updates[0].timestamp) > this.maxPendingTime) {
+                this.processPendingUpdates(key);
+            }
+        }
     }
 
     async addToPendingUpdates(key, updates) {
@@ -22,7 +33,7 @@ class BattleStatsService {
         }
 
         const pending = this.pendingUpdates.get(key);
-        pending.push(updates);
+        pending.push({ ...updates, timestamp: Date.now() });
 
         if (pending.length >= this.batchSize) {
             await this.processPendingUpdates(key);
@@ -68,17 +79,21 @@ class BattleStatsService {
 
     async processBatchDataAsync(batchData) {
         const operations = [];
+        const parallelProcessing = [];
         
         for (const { key, playerId, requestData } of batchData) {
-            try {
-                const updates = await this.prepareUpdates(key, playerId, requestData);
-                if (updates && (Object.keys(updates.$set).length > 0 || Object.keys(updates.$unset || {}).length > 0)) {
-                    operations.push({ key, updates });
-                }
-            } catch (error) {
-                console.error(`❌ Помилка обробки для ${key}:`, error);
-            }
+            parallelProcessing.push(
+                this.prepareUpdates(key, playerId, requestData).then(updates => {
+                    if (updates && (Object.keys(updates.$set).length > 0 || Object.keys(updates.$unset || {}).length > 0)) {
+                        operations.push({ key, updates });
+                    }
+                }).catch(error => {
+                    console.error(`❌ Помилка обробки для ${key}:`, error);
+                })
+            );
         }
+
+        await Promise.all(parallelProcessing);
 
         if (operations.length > 0) {
             const result = await battleStatsRepository.bulkUpdateBattleStats(operations);
@@ -417,16 +432,23 @@ class BattleStatsService {
         }
         await Promise.all(promises);
     }
+
+    destroy() {
+        clearInterval(this.cleanupInterval);
+        this.flushPendingUpdates();
+    }
 }
 
 const battleStatsService = new BattleStatsService();
 
 process.on('SIGINT', async () => {
     await battleStatsService.flushPendingUpdates();
+    battleStatsService.destroy();
 });
 
 process.on('SIGTERM', async () => {
     await battleStatsService.flushPendingUpdates();
+    battleStatsService.destroy();
 });
 
 module.exports = battleStatsService;
