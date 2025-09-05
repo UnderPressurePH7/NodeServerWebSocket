@@ -34,8 +34,7 @@ const BattleStatsSchema = new mongoose.Schema({
         return VALID_KEYS.includes(v);
       },
       message: props => `${props.value} не є валідним ключем`
-    },
-    index: true
+    }
   },
   BattleStats: { 
       type: Map,
@@ -52,9 +51,9 @@ const BattleStatsSchema = new mongoose.Schema({
   versionKey: false
 });
 
-BattleStatsSchema.index({ '_id': 1, 'BattleStats.startTime': -1 });
-BattleStatsSchema.index({ '_id': 1, 'BattleStats.win': 1 });
-BattleStatsSchema.index({ '_id': 1, 'PlayerInfo._id': 1 });
+BattleStatsSchema.index({ 'BattleStats.startTime': -1 });
+BattleStatsSchema.index({ 'BattleStats.win': 1 });
+BattleStatsSchema.index({ 'PlayerInfo._id': 1 });
 
 BattleStatsSchema.pre('save', function() {
     if (this.BattleStats instanceof Map) {
