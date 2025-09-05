@@ -93,7 +93,7 @@ class WebSocketHandler {
             this.sendError(callback, 403, 'Помилка автентифікації');
             return false;
         }
-        if (socket.authType === 'secret_key' && !data.key) {
+        if (socket.authType === 'secret_key' && !socket.authKey) {
             this.sendError(callback, 400, 'Відсутній API ключ для server-to-server запиту');
             return false;
         }
@@ -105,7 +105,7 @@ class WebSocketHandler {
             this.sendError(callback, 413, 'Розмір даних перевищує ліміт');
             return false;
         }
-        const keyForRateLimit = socket.authType === 'secret_key' ? data.secretKey : data.key;
+        const keyForRateLimit = socket.authType === 'secret_key' ? data.secretKey : socket.authKey;
         if (!await this.checkRateLimit(socket.id, keyForRateLimit, data.playerId)) {
             this.sendError(callback, 429, 'Перевищено ліміт запитів');
             return false;
@@ -119,7 +119,7 @@ class WebSocketHandler {
         try {
             metrics.totalRequests++;
             this.sendSuccess(callback, { message: 'Запит прийнято на обробку', queueSize: queue.size }, 202);
-            const roomKey = socket.authType === 'secret_key' ? data.gameKey || data.key : data.key;
+            const roomKey = socket.authType === 'secret_key' ? data.gameKey || socket.authKey : socket.authKey;
             await queue.add(async () => {
                 try {
                     const result = await battleStatsService.processDataAsync(roomKey, data.playerId, data.body || data);
@@ -145,7 +145,7 @@ class WebSocketHandler {
         try {
             const page = parseInt(data.page) || 1;
             const limit = data.limit !== undefined ? parseInt(data.limit) : 10;
-            const result = await battleStatsService.getStats(data.key, page, limit);
+            const result = await battleStatsService.getStats(socket.authKey, page, limit);
             this.sendSuccess(callback, result);
         } catch (error) {
             this.sendError(callback, 500, 'Помилка при завантаженні даних', error);
@@ -155,7 +155,7 @@ class WebSocketHandler {
     async handleGetOtherPlayersStats(socket, data, callback) {
         if (!await this.validateRequest(socket, data, callback, true)) return;
         try {
-            const result = await battleStatsService.getOtherPlayersStats(data.key, data.playerId);
+            const result = await battleStatsService.getOtherPlayersStats(socket.authKey, data.playerId);
             this.sendSuccess(callback, result);
         } catch (error) {
             this.sendError(callback, 500, 'Помилка при завантаженні даних інших гравців', error);
@@ -166,19 +166,19 @@ class WebSocketHandler {
         if (!await this.validateRequest(socket, data, callback)) return;
         try {
             this.sendSuccess(callback, { message: 'Запит на імпорт прийнято' }, 202);
-            await battleStatsService.importStats(data.key, data.body || data.importData);
-            socket.emit('importCompleted', { key: data.key, timestamp: Date.now() });
+            await battleStatsService.importStats(socket.authKey, data.body || data.importData);
+            socket.emit('importCompleted', { key: socket.authKey, timestamp: Date.now() });
         } catch (error) {
-            socket.emit('importError', { key: data.key, error: error.message, timestamp: Date.now() });
+            socket.emit('importError', { key: socket.authKey, error: error.message, timestamp: Date.now() });
         }
     }
 
     async handleClearStats(socket, data, callback) {
         if (!await this.validateRequest(socket, data, callback)) return;
         try {
-            await battleStatsService.clearStats(data.key);
-            this.sendSuccess(callback, { message: `Дані для ключа ${data.key} успішно очищено` });
-            this.io.to(`stats_${data.key}`).emit('statsCleared', { key: data.key, timestamp: Date.now() });
+            await battleStatsService.clearStats(socket.authKey);
+            this.sendSuccess(callback, { message: `Дані для ключа ${socket.authKey} успішно очищено` });
+            this.io.to(`stats_${socket.authKey}`).emit('statsCleared', { key: socket.authKey, timestamp: Date.now() });
         } catch (error) {
             this.sendError(callback, 500, 'Помилка при очищенні даних', error);
         }
@@ -191,9 +191,9 @@ class WebSocketHandler {
             return;
         }
         try {
-            await battleStatsService.deleteBattle(data.key, data.battleId);
+            await battleStatsService.deleteBattle(socket.authKey, data.battleId);
             this.sendSuccess(callback, { message: `Бій ${data.battleId} успішно видалено` });
-            this.io.to(`stats_${data.key}`).emit('battleDeleted', { key: data.key, battleId: data.battleId, timestamp: Date.now() });
+            this.io.to(`stats_${socket.authKey}`).emit('battleDeleted', { key: socket.authKey, battleId: data.battleId, timestamp: Date.now() });
         } catch (error) {
             this.sendError(callback, 500, 'Помилка при видаленні бою', error);
         }
@@ -226,7 +226,7 @@ class WebSocketHandler {
 
     async handleJoinRoom(socket, data, callback) {
         if (!await this.validateRequest(socket, data, callback)) return;
-        const roomKey = data.key;
+        const roomKey = socket.authKey;
         const roomName = `stats_${roomKey}`;
         socket.join(roomName);
         this.connectedClients.set(socket.id, { key: roomKey, playerId: data.playerId, room: roomName, connectedAt: Date.now() });
@@ -234,11 +234,11 @@ class WebSocketHandler {
     }
 
     handleLeaveRoom(socket, data, callback) {
-        if (!data || !data.key) {
+        if (!data || !socket.authKey) {
             this.sendError(callback, 400, 'Відсутній ключ кімнати');
             return;
         }
-        const roomName = `stats_${data.key}`;
+        const roomName = `stats_${socket.authKey}`;
         socket.leave(roomName);
         this.sendSuccess(callback, { message: `Вийшли з кімнати ${roomName}` });
     }
