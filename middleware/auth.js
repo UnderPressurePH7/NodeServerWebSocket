@@ -12,6 +12,57 @@ const RATE_LIMIT_MAX = 600;
 const RATE_LIMIT_TTL = 300; 
 const SESSION_TTL = 3600;
 
+class AuthCache {
+    constructor() {
+        this.wsAuthCache = new Map();
+        this.cacheTimeout = 300000;
+        this.cleanupInterval = setInterval(() => this.cleanup(), 60000);
+    }
+
+    cleanup() {
+        const now = Date.now();
+        for (const [key, value] of this.wsAuthCache.entries()) {
+            if (now - value.timestamp > this.cacheTimeout) {
+                this.wsAuthCache.delete(key);
+            }
+        }
+    }
+
+    getCachedAuth(socketId, key, playerId) {
+        const cacheKey = `${socketId}:${key}:${playerId || 'anonymous'}`;
+        const cached = this.wsAuthCache.get(cacheKey);
+        
+        if (cached && Date.now() - cached.timestamp < this.cacheTimeout) {
+            return cached.result;
+        }
+        
+        return null;
+    }
+
+    setCachedAuth(socketId, key, playerId, result) {
+        const cacheKey = `${socketId}:${key}:${playerId || 'anonymous'}`;
+        this.wsAuthCache.set(cacheKey, {
+            result,
+            timestamp: Date.now()
+        });
+    }
+
+    invalidate(socketId) {
+        for (const key of this.wsAuthCache.keys()) {
+            if (key.startsWith(`${socketId}:`)) {
+                this.wsAuthCache.delete(key);
+            }
+        }
+    }
+
+    destroy() {
+        clearInterval(this.cleanupInterval);
+        this.wsAuthCache.clear();
+    }
+}
+
+const authCache = new AuthCache();
+
 const extractApiKey = (req) => {
     return req.headers['x-api-key'];
 };
@@ -42,10 +93,10 @@ const checkRateLimit = async (key, identifier) => {
 };
 
 const validateKey = async (req, res, next) => {
-
     if (req.method === 'OPTIONS') {
         return next();
     }
+    
     const key = extractApiKey(req);
     const clientIp = req.ip || req.connection.remoteAddress || 'unknown';
     
@@ -78,6 +129,7 @@ const validateSecretKey = async (req, res, next) => {
     if (req.method === 'OPTIONS') {
         return next();
     }
+    
     const secretKey = extractSecretKey(req);
     const clientIp = req.ip || req.connection.remoteAddress || 'unknown';
     
@@ -116,7 +168,12 @@ const validateSecretKeySocket = (secretKey) => {
 
 const createSession = async (socketId, key, playerId) => {
     try {
-        if (!redisClient || !redisClient.isOpen) return null;
+        if (!redisClient || !redisClient.isOpen) {
+            const sessionId = `session:${socketId}`;
+            authCache.setCachedAuth(socketId, key, playerId, true);
+            return sessionId;
+        }
+        
         const sessionId = `session:${socketId}`;
         const session = {
             socketId,
@@ -128,6 +185,9 @@ const createSession = async (socketId, key, playerId) => {
         
         await redisClient.hSet(sessionId, session);
         await redisClient.expire(sessionId, SESSION_TTL);
+        
+        authCache.setCachedAuth(socketId, key, playerId, true);
+        
         return sessionId;
     } catch (error) {
         console.error('Помилка створення сесії:', error);
@@ -137,20 +197,33 @@ const createSession = async (socketId, key, playerId) => {
 
 const validateSession = async (socketId, key, playerId) => {
     try {
-        if (!redisClient || !redisClient.isOpen) return true;
+        const cached = authCache.getCachedAuth(socketId, key, playerId);
+        if (cached !== null) {
+            return cached;
+        }
+
+        if (!redisClient || !redisClient.isOpen) {
+            authCache.setCachedAuth(socketId, key, playerId, true);
+            return true;
+        }
+        
         const sessionId = `session:${socketId}`;
         const session = await redisClient.hGetAll(sessionId);
         
         if (!session || Object.keys(session).length === 0) {
+            authCache.setCachedAuth(socketId, key, playerId, false);
             return false;
         }
         
         if (session.socketId !== socketId || session.key !== key) {
+            authCache.setCachedAuth(socketId, key, playerId, false);
             return false;
         }
         
         await redisClient.hSet(sessionId, 'lastActivity', Date.now().toString());
         await redisClient.expire(sessionId, SESSION_TTL);
+        
+        authCache.setCachedAuth(socketId, key, playerId, true);
         return true;
     } catch (error) {
         console.error('Помилка валідації сесії:', error);
@@ -160,7 +233,10 @@ const validateSession = async (socketId, key, playerId) => {
 
 const cleanupSession = async (socketId) => {
     try {
+        authCache.invalidate(socketId);
+        
         if (!redisClient || !redisClient.isOpen) return;
+        
         const sessionId = `session:${socketId}`;
         await redisClient.del(sessionId);
     } catch (error) {
@@ -190,6 +266,14 @@ const authenticateSocketMessage = async (socket, data) => {
     return await validateSession(socket.id, data.key, data.playerId);
 };
 
+process.on('SIGINT', () => {
+    authCache.destroy();
+});
+
+process.on('SIGTERM', () => {
+    authCache.destroy();
+});
+
 module.exports = {
     setRedisClient, 
     validateKey,
@@ -202,5 +286,6 @@ module.exports = {
     authenticateSocketMessage,
     extractApiKey,
     extractSecretKey,
-    redisClient
+    redisClient,
+    authCache
 };
