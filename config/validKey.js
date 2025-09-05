@@ -36,7 +36,10 @@ const VALID_KEYS = [
     'Bizzord',
     'YKP_BOIH',
     'Vgosti',
-    'Palu4'
+    'Palu4',
+    'Venixi_ua',
+    'Smile_dimasikTV',
+    'JOKER_UAG'
 ];
 
 module.exports = VALID_KEYS;
