@@ -33,9 +33,7 @@ const VALID_KEYS = [
     'test',
     'dev-test',
     
-    'Bizzord',
-    'YKP_BOIH',
-    'Vgosti',
+
     'Palu4',
     'Venixi_ua',
     'Smile_dimasikTV',
