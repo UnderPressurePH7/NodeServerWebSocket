@@ -12,10 +12,6 @@ class RouteBuilder {
             throw new Error('Controller is required for RouteBuilder');
         }
         
-        console.log('RouteBuilder constructor - controller type:', typeof controller);
-        console.log('RouteBuilder constructor - controller keys:', Object.keys(controller));
-        console.log('RouteBuilder constructor - updateStats type:', typeof controller.updateStats);
-        
         const requiredMethods = ['updateStats', 'getStats', 'importStats', 'clearStats', 'deleteBattle', 'clearDatabase'];
         const missingMethods = requiredMethods.filter(method => typeof controller[method] !== 'function');
         
