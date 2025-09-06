@@ -16,40 +16,13 @@ const { unifiedAuth, setRedisClient } = require('./middleware/unifiedAuth');
 const { clientCors, globalCors, ALLOWED_ORIGINS } = require('./middleware/cors');
 const { version, name } = require('./package.json');
 const RouteBuilder = require('./utils/routeBuilder');
-
-let battleStatsController;
-try {
-    battleStatsController = require('./controllers/battleStatsController');
-    console.log('Controller loaded. Type:', typeof battleStatsController);
-    console.log('Controller methods:', Object.getOwnPropertyNames(battleStatsController).filter(name => typeof battleStatsController[name] === 'function'));
-    console.log('updateStats method:', typeof battleStatsController.updateStats);
-    console.log('getStats method:', typeof battleStatsController.getStats);
-} catch (error) {
-    console.error('CRITICAL: Failed to load battleStatsController:', error);
-    process.exit(1);
-}
-
-let routeBuilder;
-  try {
-      console.log('Creating RouteBuilder...');
-      console.log('battleStatsController type:', typeof battleStatsController);
-      console.log('battleStatsController keys:', Object.keys(battleStatsController));
-        
-      console.log('Testing individual methods:');
-      console.log('updateStats:', typeof battleStatsController.updateStats, battleStatsController.updateStats);
-      console.log('getStats:', typeof battleStatsController.getStats, battleStatsController.getStats);
-        
-      routeBuilder = new RouteBuilder(app, battleStatsController);
-      routeBuilder.buildClientRoutes();
-      routeBuilder.buildServerRoutes();
-    } catch (routeError) {
-      console.error('CRITICAL ERROR building routes:', routeError);
-      process.exit(1);
-    }
+const battleStatsController = require('./controllers/battleStatsController');
 
 const WEB_CONCURRENCY = Number(process.env.WEB_CONCURRENCY || 1);
 const PORT = Number(process.env.PORT || 3000);
 const IS_PROD = process.env.NODE_ENV === 'production';
+
+let redisPool = null;
 
 process.on('SIGTERM', async () => {
   console.log('SIGTERM received, shutting down gracefully');
@@ -106,7 +79,6 @@ if (cluster.isPrimary && IS_PROD) {
   });
 
   const redisUrl = process.env.REDISCLOUD_URL || process.env.REDIS_URL || null;
-  let redisPool = null;
   let primaryClient = null;
 
   (async () => {
@@ -188,6 +160,14 @@ if (cluster.isPrimary && IS_PROD) {
 
       let routeBuilder;
       try {
+        console.log('Creating RouteBuilder...');
+        console.log('battleStatsController type:', typeof battleStatsController);
+        console.log('battleStatsController keys:', Object.keys(battleStatsController));
+        
+        console.log('Testing individual methods:');
+        console.log('updateStats:', typeof battleStatsController.updateStats, battleStatsController.updateStats);
+        console.log('getStats:', typeof battleStatsController.getStats, battleStatsController.getStats);
+        
         routeBuilder = new RouteBuilder(app, battleStatsController);
         routeBuilder.buildClientRoutes();
         routeBuilder.buildServerRoutes();
