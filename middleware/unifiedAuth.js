@@ -141,6 +141,13 @@ class UnifiedAuth {
         if (!data || typeof data !== 'object') {
             return false;
         }
+
+        if (!socket.isAllowedOrigin) {
+            const messageAuthData = AuthValidationUtils.extractAuthData(data);
+            if (!messageAuthData.secretKey || !AuthValidationUtils.validateSecretKey(messageAuthData.secretKey)) {
+                return false;
+            }
+        }
         
         const messageAuthData = AuthValidationUtils.extractAuthData(data);
         
@@ -154,15 +161,19 @@ class UnifiedAuth {
 
         const validation = AuthValidationUtils.validateAuthForContext(
             finalAuthData,
-            socket.authType === 'secret_key' || !!finalAuthData.secretKey,
+            socket.authType === 'secret_key' || !!finalAuthData.secretKey || !socket.isAllowedOrigin,
             requiresPlayerId
         );
+
+        if (!validation.isValid && socket.isAllowedOrigin && !finalAuthData.apiKey && !finalAuthData.secretKey) {
+            return true;
+        }
 
         if (!validation.isValid) {
             return false;
         }
 
-        const rateLimitOk = await this.checkRateLimit(validation.keyForRateLimit, socket.id);
+        const rateLimitOk = await this.checkRateLimit(validation.keyForRateLimit || 'anonymous', socket.id);
         return rateLimitOk;
     }
 

@@ -62,6 +62,14 @@ class WebSocketHandler {
             return false;
         }
 
+        if (!socket.isAllowedOrigin) {
+            const messageAuthData = AuthValidationUtils.extractAuthData(data);
+            if (!messageAuthData.secretKey || !AuthValidationUtils.validateSecretKey(messageAuthData.secretKey)) {
+                ResponseUtils.wsError(callback, 403, 'Unauthorized origin requires secret key');
+                return false;
+            }
+        }
+
         const messageAuthData = AuthValidationUtils.extractAuthData(data);
         
         let finalAuthData = messageAuthData;
@@ -72,8 +80,12 @@ class WebSocketHandler {
             };
         }
 
-        const isServerMode = socket.authType === 'secret_key' || !!finalAuthData.secretKey;
+        const isServerMode = socket.authType === 'secret_key' || !!finalAuthData.secretKey || !socket.isAllowedOrigin;
         
+        if (socket.isAllowedOrigin && !finalAuthData.apiKey && !finalAuthData.secretKey) {
+            return true;
+        }
+
         const validation = AuthValidationUtils.validateAuthForContext(
             finalAuthData,
             isServerMode, 
