@@ -48,19 +48,6 @@ class RouteBuilder {
         next();
     };
 
-    validatePlayerId = (req, res, next) => {
-        const playerId = req.headers['x-player-id'];
-        if (!playerId) {
-            return ResponseUtils.sendError(res, {
-                statusCode: 400,
-                code: 'MISSING_PLAYER_ID',
-                message: 'Відсутній ID гравця в заголовку запиту (X-Player-ID)'
-            });
-        }
-        req.playerId = playerId;
-        next();
-    };
-
     validateBattleId = (req, res, next) => {
         if (!req.params.battleId) {
             return ResponseUtils.sendError(res, {
@@ -74,9 +61,7 @@ class RouteBuilder {
 
     asyncHandler = (fn) => {
         return (req, res, next) => {
-            // Перевіряємо чи функція існує
             if (typeof fn !== 'function') {
-                console.error(`Handler is not a function:`, fn);
                 return ResponseUtils.sendError(res, {
                     statusCode: 500,
                     code: 'HANDLER_ERROR',
@@ -94,7 +79,7 @@ class RouteBuilder {
                 method: 'post',
                 path: '/update-stats',
                 handler: this.controller.updateStats,
-                middleware: [this.validatePlayerId]
+                middleware: []
             },
             {
                 method: 'get',
@@ -137,10 +122,9 @@ class RouteBuilder {
             try {
                 const fullPath = `${basePath}${path}`;
                 
-                // Перевіряємо handler перед створенням роуту
                 if (!handler || typeof handler !== 'function') {
                     console.error(`Invalid handler for ${method.toUpperCase()} ${fullPath}:`, handler);
-                    return; // Пропускаємо цей роут
+                    return;
                 }
                 
                 const allMiddleware = [
@@ -153,7 +137,6 @@ class RouteBuilder {
                     allMiddleware.unshift(corsMiddleware);
                 }
 
-                console.log(`Registering route: ${method.toUpperCase()} ${fullPath}`);
                 this.app[method](fullPath, ...allMiddleware, this.asyncHandler(handler));
                 
             } catch (error) {
@@ -163,12 +146,10 @@ class RouteBuilder {
     }
 
     buildClientRoutes() {
-        console.log('Building client routes...');
         this.buildRoutes('/api/battle-stats', this.addClientHeaders, clientCors, false, false);
     }
 
     buildServerRoutes() {
-        console.log('Building server routes...');
         this.buildRoutes('/api/server', this.addServerHeaders, null, true, true);
     }
 }

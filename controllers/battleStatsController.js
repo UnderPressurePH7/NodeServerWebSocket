@@ -1,7 +1,7 @@
 const ResponseUtils = require('../utils/responseUtils');
-const { queue } = require('../config/queue');
-const { metrics } = require('../config/metrics');
-const BattleStatsModel = require('../models/battleStatsModel');
+const { addWithRetry, isQueueFull, getQueueStats } = require('../config/queue');
+const metrics = require('../config/metrics');
+const battleStatsService = require('../services/battleStatsService');
 
 class BattleStatsController {
     constructor() {
@@ -15,8 +15,6 @@ class BattleStatsController {
 
     async updateStats(req, res) {
         try {
-            console.log('updateStats called with:', req.body);
-            
             if (!req.body || Object.keys(req.body).length === 0) {
                 return ResponseUtils.sendError(res, {
                     statusCode: 400,
@@ -25,30 +23,47 @@ class BattleStatsController {
                 });
             }
 
-            const result = await queue.add('updateStats', {
-                data: req.body,
-                playerId: req.playerId,
-                timestamp: new Date().toISOString()
+            if (isQueueFull()) {
+                return ResponseUtils.sendError(res, {
+                    statusCode: 503,
+                    code: 'QUEUE_FULL',
+                    message: 'Сервер перевантажено, спробуйте пізніше'
+                });
+            }
+
+            const result = await addWithRetry('updateStats', async () => {
+                return await battleStatsService.processDataAsync(req.apiKey, req.body);
+            }, {
+                retries: 3,
+                retryDelay: 1000,
+                priority: 5
             });
 
             metrics.totalRequests++;
-            metrics.successfulRequests++;
-
-            ResponseUtils.sendSuccess(res, {
-                message: 'Статистика додана до черги оновлення',
-                jobId: result.id,
-                queuePosition: await queue.count()
-            });
+            
+            if (result) {
+                metrics.successfulRequests++;
+                ResponseUtils.sendSuccess(res, {
+                    message: 'Статистика успішно оновлена',
+                    queueStats: getQueueStats()
+                }, {}, 202);
+            } else {
+                metrics.failedRequests++;
+                ResponseUtils.sendError(res, {
+                    statusCode: 422,
+                    code: 'PROCESSING_FAILED',
+                    message: 'Не вдалося обробити дані'
+                });
+            }
 
         } catch (error) {
-            console.error('Error in updateStats:', error);
             metrics.totalRequests++;
             metrics.failedRequests++;
             
             ResponseUtils.sendError(res, {
                 statusCode: 500,
                 code: 'UPDATE_STATS_ERROR',
-                message: 'Помилка при додаванні статистики до черги'
+                message: 'Помилка при оновленні статистики'
             });
         }
     }
@@ -56,28 +71,14 @@ class BattleStatsController {
     async getStats(req, res) {
         try {
             const { page, limit } = req.pagination;
-            const skip = (page - 1) * limit;
-
-            const stats = await BattleStatsModel.find()
-                .sort({ battleTime: -1 })
-                .skip(skip)
-                .limit(limit)
-                .lean();
-
-            const total = await BattleStatsModel.countDocuments();
+            const result = await battleStatsService.getStats(req.apiKey, page, limit);
 
             ResponseUtils.sendSuccess(res, {
-                stats,
-                pagination: {
-                    page,
-                    limit,
-                    total,
-                    pages: Math.ceil(total / limit)
-                }
+                ...result,
+                pagination: { page, limit }
             });
 
         } catch (error) {
-            console.error('Error in getStats:', error);
             ResponseUtils.sendError(res, {
                 statusCode: 500,
                 code: 'GET_STATS_ERROR',
@@ -88,9 +89,10 @@ class BattleStatsController {
 
     async importStats(req, res) {
         try {
-            const { stats } = req.body;
+            const { stats, ...importData } = req.body;
+            const dataToImport = stats || importData;
 
-            if (!Array.isArray(stats) || stats.length === 0) {
+            if (!dataToImport || typeof dataToImport !== 'object') {
                 return ResponseUtils.sendError(res, {
                     statusCode: 400,
                     code: 'INVALID_IMPORT_DATA',
@@ -98,18 +100,20 @@ class BattleStatsController {
                 });
             }
 
-            const result = await queue.add('importStats', {
-                stats,
-                timestamp: new Date().toISOString()
+            await addWithRetry('importStats', async () => {
+                return await battleStatsService.importStats(req.apiKey, dataToImport);
+            }, {
+                retries: 2,
+                retryDelay: 2000,
+                priority: 8
             });
 
             ResponseUtils.sendSuccess(res, {
-                message: `Імпорт ${stats.length} записів додано до черги`,
-                jobId: result.id
+                message: 'Імпорт успішно завершено',
+                key: req.apiKey
             });
 
         } catch (error) {
-            console.error('Error in importStats:', error);
             ResponseUtils.sendError(res, {
                 statusCode: 500,
                 code: 'IMPORT_ERROR',
@@ -120,17 +124,19 @@ class BattleStatsController {
 
     async clearStats(req, res) {
         try {
-            const result = await queue.add('clearStats', {
-                timestamp: new Date().toISOString()
+            await addWithRetry('clearStats', async () => {
+                return await battleStatsService.clearStats(req.apiKey);
+            }, {
+                retries: 1,
+                priority: 7
             });
 
             ResponseUtils.sendSuccess(res, {
-                message: 'Очищення статистики додано до черги',
-                jobId: result.id
+                message: 'Статистика успішно очищена',
+                key: req.apiKey
             });
 
         } catch (error) {
-            console.error('Error in clearStats:', error);
             ResponseUtils.sendError(res, {
                 statusCode: 500,
                 code: 'CLEAR_ERROR',
@@ -143,23 +149,20 @@ class BattleStatsController {
         try {
             const { battleId } = req.params;
 
-            const result = await BattleStatsModel.deleteOne({ battleId });
-
-            if (result.deletedCount === 0) {
-                return ResponseUtils.sendError(res, {
-                    statusCode: 404,
-                    code: 'BATTLE_NOT_FOUND',
-                    message: 'Бій не знайдено'
-                });
-            }
+            await addWithRetry('deleteBattle', async () => {
+                return await battleStatsService.deleteBattle(req.apiKey, battleId);
+            }, {
+                retries: 1,
+                priority: 6
+            });
 
             ResponseUtils.sendSuccess(res, {
                 message: 'Бій успішно видалено',
-                battleId
+                battleId,
+                key: req.apiKey
             });
 
         } catch (error) {
-            console.error('Error in deleteBattle:', error);
             ResponseUtils.sendError(res, {
                 statusCode: 500,
                 code: 'DELETE_BATTLE_ERROR',
@@ -170,17 +173,18 @@ class BattleStatsController {
 
     async clearDatabase(req, res) {
         try {
-            const result = await queue.add('clearDatabase', {
-                timestamp: new Date().toISOString()
+            await addWithRetry('clearDatabase', async () => {
+                return await battleStatsService.clearDatabase();
+            }, {
+                retries: 1,
+                priority: 10
             });
 
             ResponseUtils.sendSuccess(res, {
-                message: 'Очищення бази даних додано до черги',
-                jobId: result.id
+                message: 'База даних успішно очищена'
             });
 
         } catch (error) {
-            console.error('Error in clearDatabase:', error);
             ResponseUtils.sendError(res, {
                 statusCode: 500,
                 code: 'CLEAR_DATABASE_ERROR',

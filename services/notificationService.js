@@ -5,15 +5,13 @@ class NotificationService {
 
     setIo(io) {
         this.globalIo = io;
-        console.log('📡 IO інстанс встановлено в NotificationService');
     }
 
-    notifyStatsUpdated(key, playerId) {
+    notifyStatsUpdated(key) {
         if (!this.globalIo) return;
         
         const updateData = {
             key,
-            playerId,
             timestamp: Date.now()
         };
         

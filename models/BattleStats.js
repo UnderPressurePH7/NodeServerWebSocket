@@ -38,14 +38,27 @@ const BattleStatsSchema = new mongoose.Schema({
   },
   BattleStats: { 
       type: Map,
-      of: battleSchema
+      of: battleSchema,
+      default: () => new Map()
   },
   PlayerInfo: { 
       type: Map,
-      of: playerInfoSchema
+      of: playerInfoSchema,
+      default: () => new Map()
   }
 }, {
-  toJSON: { getters: true },
+  toJSON: { 
+    getters: true,
+    transform: function(doc, ret) {
+      if (ret.BattleStats instanceof Map) {
+        ret.BattleStats = Object.fromEntries(ret.BattleStats);
+      }
+      if (ret.PlayerInfo instanceof Map) {
+        ret.PlayerInfo = Object.fromEntries(ret.PlayerInfo);
+      }
+      return ret;
+    }
+  },
   strict: false,       
   minimize: false,      
   versionKey: false
@@ -75,5 +88,41 @@ BattleStatsSchema.pre('save', function() {
         }
     }
 });
+
+
+BattleStatsSchema.statics.findByKey = function(key) {
+    return this.findById(key);
+};
+
+BattleStatsSchema.statics.createNewStats = function(key) {
+    return new this({
+        _id: key,
+        BattleStats: new Map(),
+        PlayerInfo: new Map()
+    });
+};
+
+BattleStatsSchema.statics.addBattle = function(key, battleId, battleData) {
+    return this.updateOne(
+        { _id: key },
+        { $set: { [`BattleStats.${battleId}`]: battleData } },
+        { upsert: true }
+    );
+};
+
+BattleStatsSchema.statics.removeBattle = function(key, battleId) {
+    return this.updateOne(
+        { _id: key },
+        { $unset: { [`BattleStats.${battleId}`]: "" } }
+    );
+};
+
+BattleStatsSchema.statics.clearAllStats = function(key) {
+    return this.updateOne(
+        { _id: key },
+        { $set: { BattleStats: {}, PlayerInfo: {} } },
+        { upsert: true }
+    );
+};
 
 module.exports = mongoose.model('BattleStats', BattleStatsSchema);

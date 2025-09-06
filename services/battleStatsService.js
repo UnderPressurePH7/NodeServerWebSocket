@@ -56,10 +56,7 @@ class BattleStatsService {
             this.updateTimeouts.delete(key);
         }
 
-        const mergedUpdate = {
-            $set: {},
-            $unset: {}
-        };
+        const mergedUpdate = { $set: {}, $unset: {} };
 
         for (const update of pending) {
             if (update.$set) {
@@ -81,14 +78,14 @@ class BattleStatsService {
         const operations = [];
         const parallelProcessing = [];
         
-        for (const { key, playerId, requestData } of batchData) {
+        for (const { key, requestData } of batchData) {
             parallelProcessing.push(
-                this.prepareUpdates(key, playerId, requestData).then(updates => {
+                this.prepareUpdates(key, requestData).then(updates => {
                     if (updates && (Object.keys(updates.$set).length > 0 || Object.keys(updates.$unset || {}).length > 0)) {
                         operations.push({ key, updates });
                     }
                 }).catch(error => {
-                    console.error(`❌ Помилка обробки для ${key}:`, error);
+                    console.error(`Помилка обробки для ${key}:`, error);
                 })
             );
         }
@@ -98,8 +95,8 @@ class BattleStatsService {
         if (operations.length > 0) {
             const result = await battleStatsRepository.bulkUpdateBattleStats(operations);
             
-            for (const { key, playerId } of batchData) {
-                notificationService.notifyStatsUpdated(key, playerId);
+            for (const { key } of batchData) {
+                notificationService.notifyStatsUpdated(key);
             }
             
             return result;
@@ -108,7 +105,7 @@ class BattleStatsService {
         return { acknowledged: true, modifiedCount: 0 };
     }
 
-    async prepareUpdates(key, playerId, requestData) {
+    async prepareUpdates(key, requestData) {
         const { BattleStats: incomingBattleStats, PlayerInfo: incomingPlayerInfo } = requestData || {};
         
         if (!incomingBattleStats && !incomingPlayerInfo) {
@@ -169,20 +166,20 @@ class BattleStatsService {
         return updates;
     }
 
-    async processDataAsync(key, playerId, requestData) {
+    async processDataAsync(key, requestData) {
         try {
-            const updates = await this.prepareUpdates(key, playerId, requestData);
+            const updates = await this.prepareUpdates(key, requestData);
             
             if (!updates || (Object.keys(updates.$set).length === 0 && Object.keys(updates.$unset || {}).length === 0)) {
                 return false;
             }
 
             await this.addToPendingUpdates(key, updates);
-            notificationService.notifyStatsUpdated(key, playerId);
+            notificationService.notifyStatsUpdated(key);
             
             return true;
         } catch (error) {
-            console.error(`❌ Критична помилка в processDataAsync для ключа ${key}:`, error);
+            console.error(`Критична помилка в processDataAsync для ключа ${key}:`, error);
             return false;
         }
     }
@@ -211,8 +208,6 @@ class BattleStatsService {
         let fullDoc = await battleStatsRepository.findByKey(key);
 
         try {
-            const rawData = await battleStatsRepository.getStatsRaw(key);
-
             if (limit === 0) {
                 statsDoc = fullDoc || {};
             } else {
@@ -233,32 +228,13 @@ class BattleStatsService {
             DataTransformer.ensureMapStructure(statsDoc);
             const { cleanBattleStats, cleanPlayerInfo } = DataTransformer.convertMapsToObjects(statsDoc);
 
-            const result = {
+            return {
                 success: true,
                 BattleStats: cleanBattleStats,
                 PlayerInfo: cleanPlayerInfo
             };
-
-            return result;
         } catch (error) {
-            console.error('❌ Помилка в getStats:', error);
-            throw error;
-        }
-    }
-
-    async diagnoseData(key) {
-        try {
-            const rawData = await battleStatsRepository.getStatsRaw(key);
-            const foundData = await battleStatsRepository.findByKey(key);
-            const paginatedData = await battleStatsRepository.getPaginatedBattles(key, 1, 10);
-            
-            return {
-                rawData,
-                foundData: !!foundData,
-                paginatedData: paginatedData.length > 0
-            };
-        } catch (error) {
-            console.error('❌ Помилка діагностики:', error);
+            console.error('Помилка в getStats:', error);
             throw error;
         }
     }
@@ -275,12 +251,9 @@ class BattleStatsService {
             }
 
             const cleanBattleStats = {};
-            let totalBattles = 0;
-            let filteredBattles = 0;
 
             if (statsDoc.BattleStats instanceof Map) {
                 statsDoc.BattleStats.forEach((battle, battleId) => {
-                    totalBattles++;
                     const otherPlayersData = {};
                     let hasOtherPlayers = false;
 
@@ -303,12 +276,10 @@ class BattleStatsService {
                             mapName: battle.mapName,
                             players: otherPlayersData
                         };
-                        filteredBattles++;
                     }
                 });
             } else if (statsDoc.BattleStats && typeof statsDoc.BattleStats === 'object') {
                 Object.entries(statsDoc.BattleStats).forEach(([battleId, battle]) => {
-                    totalBattles++;
                     const otherPlayersData = {};
                     let hasOtherPlayers = false;
 
@@ -329,7 +300,6 @@ class BattleStatsService {
                             mapName: battle.mapName,
                             players: otherPlayersData
                         };
-                        filteredBattles++;
                     }
                 });
             }
@@ -339,7 +309,7 @@ class BattleStatsService {
                 BattleStats: cleanBattleStats
             };
         } catch (error) {
-            console.error('❌ Помилка в getOtherPlayersStats:', error);
+            console.error('Помилка в getOtherPlayersStats:', error);
             throw error;
         }
     }
@@ -387,7 +357,7 @@ class BattleStatsService {
             
             return { success: true };
         } catch (error) {
-            console.error('❌ Помилка в importStats:', error);
+            console.error('Помилка в importStats:', error);
             throw error;
         }
     }
@@ -398,7 +368,7 @@ class BattleStatsService {
             notificationService.notifyStatsCleared(key);
             return { success: true };
         } catch (error) {
-            console.error('❌ Помилка в clearStats:', error);
+            console.error('Помилка в clearStats:', error);
             throw error;
         }
     }
@@ -409,7 +379,7 @@ class BattleStatsService {
             notificationService.notifyBattleDeleted(key, battleId);
             return { success: true };
         } catch (error) {
-            console.error('❌ Помилка в deleteBattle:', error);
+            console.error('Помилка в deleteBattle:', error);
             throw error;
         }
     }
@@ -420,7 +390,7 @@ class BattleStatsService {
             notificationService.notifyDatabaseCleared();
             return { success: true, message: 'База даних успішно очищена' };
         } catch (error) {
-            console.error('❌ Помилка в clearDatabase:', error);
+            console.error('Помилка в clearDatabase:', error);
             throw error;
         }
     }

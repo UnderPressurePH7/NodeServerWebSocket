@@ -74,7 +74,6 @@ class WebSocketHandler {
         );
 
         if (!validation.isValid) {
-            console.log('❌ WebSocket auth validation failed:', validation.errors);
             ResponseUtils.wsError(callback, 403, validation.errors.join('; '));
             return false;
         }
@@ -88,7 +87,7 @@ class WebSocketHandler {
     }
 
     async handleUpdateStats(socket, data, callback) {
-        if (!await this.validateRequest(socket, data, callback, true)) return;
+        if (!await this.validateRequest(socket, data, callback, false)) return;
         if (isQueueFull()) return ResponseUtils.wsError(callback, 503, 'Сервер перевантажено, спробуйте пізніше');
         
         try {
@@ -102,19 +101,17 @@ class WebSocketHandler {
             
             await queue.add(async () => {
                 try {
-                    const result = await battleStatsService.processDataAsync(roomKey, data.playerId, data.body || data);
+                    const result = await battleStatsService.processDataAsync(roomKey, data.body || data);
                     if (result) {
                         metrics.successfulRequests++;
                         this.io.to(`stats_${roomKey}`).emit('statsUpdated', { 
                             key: roomKey, 
-                            playerId: data.playerId, 
                             timestamp: Date.now() 
                         });
                     } else {
                         metrics.failedRequests++;
                         socket.emit('updateError', { 
                             key: roomKey, 
-                            playerId: data.playerId, 
                             error: 'Обробка не вдалася', 
                             timestamp: Date.now() 
                         });
@@ -123,7 +120,6 @@ class WebSocketHandler {
                     metrics.failedRequests++;
                     socket.emit('updateError', { 
                         key: roomKey, 
-                        playerId: data.playerId, 
                         error: error.message, 
                         timestamp: Date.now() 
                     });
@@ -143,6 +139,25 @@ class WebSocketHandler {
             ResponseUtils.wsSuccess(callback, result);
         } catch (error) {
             ResponseUtils.wsError(callback, 500, 'Помилка при завантаженні даних', error);
+        }
+    }
+
+    async handleGetOtherPlayersStats(socket, data, callback) {
+        if (!await this.validateRequest(socket, data, callback, false)) return;
+        
+        try {
+            const excludePlayerId = data.excludePlayerId || data.playerId;
+            
+            if (!excludePlayerId) {
+                ResponseUtils.wsError(callback, 400, 'Відсутній ID гравця для виключення');
+                return;
+            }
+            
+            const result = await battleStatsService.getOtherPlayersStats(socket.authKey, excludePlayerId);
+            ResponseUtils.wsSuccess(callback, result);
+            
+        } catch (error) {
+            ResponseUtils.wsError(callback, 500, 'Помилка при завантаженні даних інших гравців', error);
         }
     }
 
@@ -221,7 +236,7 @@ class WebSocketHandler {
         const roomKey = socket.authKey;
         const roomName = `stats_${roomKey}`;
         socket.join(roomName);
-        this.connectedClients.set(socket.id, { key: roomKey, playerId: data.playerId, room: roomName, connectedAt: Date.now() });
+        this.connectedClients.set(socket.id, { key: roomKey, room: roomName, connectedAt: Date.now() });
         ResponseUtils.wsSuccess(callback, { message: `Приєднано до кімнати ${roomName}`, room: roomName });
     }
 
@@ -239,7 +254,6 @@ class WebSocketHandler {
         const clients = Array.from(this.connectedClients.entries()).map(([socketId, info]) => ({
             socketId,
             key: info.key,
-            playerId: info.playerId,
             room: info.room,
             connectedAt: info.connectedAt,
             uptime: Date.now() - info.connectedAt
