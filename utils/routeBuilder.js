@@ -78,37 +78,37 @@ class RouteBuilder {
             {
                 method: 'post',
                 path: '/update-stats',
-                handler: this.controller.updateStats,
+                handler: this.controller.updateStats.bind(this.controller),
                 middleware: []
             },
             {
                 method: 'get',
                 path: '/stats',
-                handler: this.controller.getStats,
+                handler: this.controller.getStats.bind(this.controller),
                 middleware: [this.validatePagination]
             },
             {
                 method: 'post',
                 path: '/import',
-                handler: this.controller.importStats,
+                handler: this.controller.importStats.bind(this.controller),
                 middleware: []
             },
             {
                 method: 'delete',
                 path: '/clear',
-                handler: this.controller.clearStats,
+                handler: this.controller.clearStats.bind(this.controller),
                 middleware: []
             },
             {
                 method: 'delete',
                 path: '/battle/:battleId',
-                handler: this.controller.deleteBattle,
+                handler: this.controller.deleteBattle.bind(this.controller),
                 middleware: [this.validateBattleId]
             },
             {
                 method: 'delete',
                 path: '/clear-database',
-                handler: this.controller.clearDatabase,
+                handler: this.controller.clearDatabase.bind(this.controller),
                 middleware: [],
                 requireSecret: true
             }
@@ -123,7 +123,7 @@ class RouteBuilder {
                 const fullPath = `${basePath}${path}`;
                 
                 if (!handler || typeof handler !== 'function') {
-                    console.error(`Invalid handler for ${method.toUpperCase()} ${fullPath}:`, handler);
+                    console.error(`Error registering route ${method} ${path}: Invalid handler -`, typeof handler);
                     return;
                 }
                 

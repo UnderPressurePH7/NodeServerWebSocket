@@ -4,15 +4,6 @@ const metrics = require('../config/metrics');
 const battleStatsService = require('../services/battleStatsService');
 
 class BattleStatsController {
-    constructor() {
-        this.updateStats = this.updateStats.bind(this);
-        this.getStats = this.getStats.bind(this);
-        this.importStats = this.importStats.bind(this);
-        this.clearStats = this.clearStats.bind(this);
-        this.deleteBattle = this.deleteBattle.bind(this);
-        this.clearDatabase = this.clearDatabase.bind(this);
-    }
-
     async updateStats(req, res) {
         try {
             if (!req.body || Object.keys(req.body).length === 0) {
