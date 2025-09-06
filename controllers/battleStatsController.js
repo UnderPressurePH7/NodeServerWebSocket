@@ -65,22 +65,6 @@ const battleStatsController = {
         }
     },
 
-    getOtherPlayersStats: async (req, res) => {
-        try {
-            const key = req.apiKey;
-            const excludePlayerId = req.playerId;
-
-            const result = await battleStatsService.getOtherPlayersStats(key, excludePlayerId);
-            ResponseUtils.sendSuccess(res, result);
-        } catch (error) {
-            console.error('❌ Помилка при завантаженні даних інших гравців:', error);
-            ResponseUtils.sendError(res, {
-                statusCode: 500,
-                message: 'Помилка при завантаженні даних інших гравців'
-            });
-        }
-    },
-
     importStats: async (req, res) => {
         const key = req.apiKey;
 
