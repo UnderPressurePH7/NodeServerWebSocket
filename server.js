@@ -340,6 +340,23 @@ if (cluster.isPrimary && IS_PROD) {
     });
   });
 
+  app.get('/api/websocket-test', (req, res) => {
+    ResponseUtils.sendSuccess(res, {
+      socketIo: {
+        connected: io.engine.clientsCount,
+        transport: 'websocket, polling'
+      },
+      cors: {
+        origins: [
+          'https://underpressureph7.github.io',
+          'http://localhost:3000',
+          'http://127.0.0.1:3000',
+          'https://localhost:3000'
+        ]
+      }
+    });
+  });
+
   app.use('*', (req, res) => {
     const error = new AppError(`Route ${req.method} ${req.originalUrl} not found`, 404);
     ResponseUtils.sendError(res, error);
