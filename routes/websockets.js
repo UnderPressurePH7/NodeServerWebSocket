@@ -44,6 +44,13 @@ class WebSocketHandler {
         }
     }
 
+    getTargetKey(socket, data) {
+        if (socket.authType === 'secret_key') {
+            return data.gameKey || data.key || socket.authKey;
+        }
+        return socket.authKey;
+    }
+
     async validateRequest(socket, data, callback, requiresPlayerId = false) {
         if (!data || typeof data !== 'object') {
             ResponseUtils.wsError(callback, 400, 'Невалідні дані запиту');
@@ -78,6 +85,14 @@ class WebSocketHandler {
             return false;
         }
 
+        if (socket.authType === 'secret_key') {
+            const targetKey = this.getTargetKey(socket, data);
+            if (!targetKey) {
+                ResponseUtils.wsError(callback, 400, 'Відсутній key або gameKey для secret_key операції');
+                return false;
+            }
+        }
+
         if (!await unifiedAuth.validateSocketMessage(socket, data, requiresPlayerId)) {
             ResponseUtils.wsError(callback, 429, 'Перевищено ліміт запитів або помилка автентифікації');
             return false;
@@ -103,21 +118,21 @@ class WebSocketHandler {
                 });
             }
             
-            const roomKey = socket.authType === 'secret_key' ? data.gameKey || socket.authKey : socket.authKey;
+            const targetKey = this.getTargetKey(socket, data);
             
             await queue.add(async () => {
                 try {
-                    const result = await battleStatsService.processDataAsync(roomKey, data.body || data);
+                    const result = await battleStatsService.processDataAsync(targetKey, data.body || data);
                     if (result) {
                         metrics.successfulRequests++;
-                        this.io.to(`stats_${roomKey}`).emit('statsUpdated', { 
-                            key: roomKey, 
+                        this.io.to(`stats_${targetKey}`).emit('statsUpdated', { 
+                            key: targetKey, 
                             timestamp: Date.now() 
                         });
                     } else {
                         metrics.failedRequests++;
                         socket.emit('updateError', { 
-                            key: roomKey, 
+                            key: targetKey, 
                             error: 'Обробка не вдалася', 
                             timestamp: Date.now() 
                         });
@@ -125,7 +140,7 @@ class WebSocketHandler {
                 } catch (error) {
                     metrics.failedRequests++;
                     socket.emit('updateError', { 
-                        key: roomKey, 
+                        key: targetKey, 
                         error: error.message, 
                         timestamp: Date.now() 
                     });
@@ -141,7 +156,8 @@ class WebSocketHandler {
         try {
             const page = parseInt(data.page) || 1;
             const limit = data.limit !== undefined ? parseInt(data.limit) : 100;
-            const result = await battleStatsService.getStats(socket.authKey, page, limit);
+            const targetKey = this.getTargetKey(socket, data);
+            const result = await battleStatsService.getStats(targetKey, page, limit);
             
             if (typeof callback === 'function') {
                 callback({
@@ -159,6 +175,8 @@ class WebSocketHandler {
     async handleImportStats(socket, data, callback) {
         if (!await this.validateRequest(socket, data, callback)) return;
         try {
+            const targetKey = this.getTargetKey(socket, data);
+            
             if (typeof callback === 'function') {
                 callback({
                     status: 202,
@@ -167,28 +185,30 @@ class WebSocketHandler {
                     timestamp: new Date().toISOString()
                 });
             }
-            await battleStatsService.importStats(socket.authKey, data.body || data.importData);
-            socket.emit('importCompleted', { key: socket.authKey, timestamp: Date.now() });
+            await battleStatsService.importStats(targetKey, data.body || data.importData);
+            socket.emit('importCompleted', { key: targetKey, timestamp: Date.now() });
         } catch (error) {
-            socket.emit('importError', { key: socket.authKey, error: error.message, timestamp: Date.now() });
+            const targetKey = this.getTargetKey(socket, data);
+            socket.emit('importError', { key: targetKey, error: error.message, timestamp: Date.now() });
         }
     }
 
     async handleClearStats(socket, data, callback) {
         if (!await this.validateRequest(socket, data, callback)) return;
         try {
-            await battleStatsService.clearStats(socket.authKey);
+            const targetKey = this.getTargetKey(socket, data);
+            await battleStatsService.clearStats(targetKey);
             
             if (typeof callback === 'function') {
                 callback({
                     status: 200,
                     success: true,
-                    message: `Дані для ключа ${socket.authKey} успішно очищено`,
+                    message: `Дані для ключа ${targetKey} успішно очищено`,
                     timestamp: new Date().toISOString()
                 });
             }
             
-            this.io.to(`stats_${socket.authKey}`).emit('statsCleared', { key: socket.authKey, timestamp: Date.now() });
+            this.io.to(`stats_${targetKey}`).emit('statsCleared', { key: targetKey, timestamp: Date.now() });
         } catch (error) {
             ResponseUtils.wsError(callback, 500, 'Помилка при очищенні даних', error);
         }
@@ -201,7 +221,8 @@ class WebSocketHandler {
             return;
         }
         try {
-            await battleStatsService.deleteBattle(socket.authKey, data.battleId);
+            const targetKey = this.getTargetKey(socket, data);
+            await battleStatsService.deleteBattle(targetKey, data.battleId);
             
             if (typeof callback === 'function') {
                 callback({
@@ -212,7 +233,7 @@ class WebSocketHandler {
                 });
             }
             
-            this.io.to(`stats_${socket.authKey}`).emit('battleDeleted', { key: socket.authKey, battleId: data.battleId, timestamp: Date.now() });
+            this.io.to(`stats_${targetKey}`).emit('battleDeleted', { key: targetKey, battleId: data.battleId, timestamp: Date.now() });
         } catch (error) {
             ResponseUtils.wsError(callback, 500, 'Помилка при видаленні бою', error);
         }
@@ -266,62 +287,6 @@ class WebSocketHandler {
         }
     }
 
-    async handleJoinRoom(socket, data, callback) {
-        if (!await this.validateRequest(socket, data, callback, false)) return;
-        const roomKey = socket.authKey;
-        const roomName = `stats_${roomKey}`;
-        socket.join(roomName);
-        this.connectedClients.set(socket.id, { key: roomKey, room: roomName, connectedAt: Date.now() });
-        
-        if (typeof callback === 'function') {
-            callback({
-                status: 200,
-                success: true,
-                message: `Приєднано до кімнати ${roomName}`,
-                room: roomName,
-                timestamp: new Date().toISOString()
-            });
-        }
-    }
-
-    handleLeaveRoom(socket, data, callback) {
-        if (!data || !socket.authKey) {
-            ResponseUtils.wsError(callback, 400, 'Відсутній ключ кімнати');
-            return;
-        }
-        const roomName = `stats_${socket.authKey}`;
-        socket.leave(roomName);
-        
-        if (typeof callback === 'function') {
-            callback({
-                status: 200,
-                success: true,
-                message: `Вийшли з кімнати ${roomName}`,
-                timestamp: new Date().toISOString()
-            });
-        }
-    }
-
-    handleGetConnectedClients(socket, callback) {
-        const clients = Array.from(this.connectedClients.entries()).map(([socketId, info]) => ({
-            socketId,
-            key: info.key,
-            room: info.room,
-            connectedAt: info.connectedAt,
-            uptime: Date.now() - info.connectedAt
-        }));
-        
-        if (typeof callback === 'function') {
-            callback({
-                status: 200,
-                success: true,
-                totalClients: this.io.engine.clientsCount,
-                connectedClients: clients,
-                timestamp: new Date().toISOString()
-            });
-        }
-    }
-
     async handleDisconnect(socket, reason) {
         const clientInfo = this.connectedClients.get(socket.id);
         if (clientInfo) {
@@ -350,6 +315,17 @@ function initializeWebSocket(io, redisClientInstance) {
             message: 'Успішно підключено до BattleStats WebSocket' 
         });
         
+        const roomKey = socket.authKey;
+        if (roomKey) {
+            const roomName = `stats_${roomKey}`;
+            socket.join(roomName);
+            wsHandler.connectedClients.set(socket.id, { 
+                key: roomKey, 
+                room: roomName, 
+                connectedAt: Date.now() 
+            });
+        }
+        
         socket.on('updateStats', (data, callback) => wsHandler.handleUpdateStats(socket, data, callback));
         socket.on('getStats', (data, callback) => wsHandler.handleGetStats(socket, data, callback));
         socket.on('importStats', (data, callback) => wsHandler.handleImportStats(socket, data, callback));
@@ -357,9 +333,6 @@ function initializeWebSocket(io, redisClientInstance) {
         socket.on('deleteBattle', (data, callback) => wsHandler.handleDeleteBattle(socket, data, callback));
         socket.on('clearDatabase', (data, callback) => wsHandler.handleClearDatabase(socket, data, callback));
         socket.on('getQueueStatus', (callback) => wsHandler.handleGetQueueStatus(socket, callback));
-        socket.on('joinRoom', (data, callback) => wsHandler.handleJoinRoom(socket, data, callback));
-        socket.on('leaveRoom', (data, callback) => wsHandler.handleLeaveRoom(socket, data, callback));
-        socket.on('getConnectedClients', (callback) => wsHandler.handleGetConnectedClients(socket, callback));
         socket.on('ping', (callback) => {
             const response = { 
                 status: 200, 

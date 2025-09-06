@@ -41,13 +41,11 @@ const createCorsMiddleware = (defaultOrigin = null, additionalMethods = []) => {
 
 const clientCors = createCorsMiddleware('https://underpressureph7.github.io');
 
-const serverCors = createCorsMiddleware('*', ['PATCH']);
 
 const globalCors = createCorsMiddleware('*');
 
 module.exports = { 
     clientCors, 
-    serverCors, 
     globalCors,
     ALLOWED_ORIGINS,
     createCorsMiddleware 
