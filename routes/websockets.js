@@ -92,10 +92,16 @@ class WebSocketHandler {
         
         try {
             metrics.totalRequests++;
-            ResponseUtils.wsSuccess(callback, { 
-                message: 'Запит прийнято на обробку', 
-                queueSize: queue.size 
-            }, 202);
+            
+            if (typeof callback === 'function') {
+                callback({
+                    status: 202,
+                    success: true,
+                    message: 'Запит прийнято на обробку',
+                    queueSize: queue.size,
+                    timestamp: new Date().toISOString()
+                });
+            }
             
             const roomKey = socket.authType === 'secret_key' ? data.gameKey || socket.authKey : socket.authKey;
             
@@ -136,35 +142,31 @@ class WebSocketHandler {
             const page = parseInt(data.page) || 1;
             const limit = data.limit !== undefined ? parseInt(data.limit) : 100;
             const result = await battleStatsService.getStats(socket.authKey, page, limit);
-            ResponseUtils.wsSuccess(callback, result);
+            
+            if (typeof callback === 'function') {
+                callback({
+                    status: 200,
+                    success: true,
+                    ...result,
+                    timestamp: new Date().toISOString()
+                });
+            }
         } catch (error) {
             ResponseUtils.wsError(callback, 500, 'Помилка при завантаженні даних', error);
-        }
-    }
-
-    async handleGetOtherPlayersStats(socket, data, callback) {
-        if (!await this.validateRequest(socket, data, callback, false)) return;
-        
-        try {
-            const excludePlayerId = data.excludePlayerId || data.playerId;
-            
-            if (!excludePlayerId) {
-                ResponseUtils.wsError(callback, 400, 'Відсутній ID гравця для виключення');
-                return;
-            }
-            
-            const result = await battleStatsService.getOtherPlayersStats(socket.authKey, excludePlayerId);
-            ResponseUtils.wsSuccess(callback, result);
-            
-        } catch (error) {
-            ResponseUtils.wsError(callback, 500, 'Помилка при завантаженні даних інших гравців', error);
         }
     }
 
     async handleImportStats(socket, data, callback) {
         if (!await this.validateRequest(socket, data, callback)) return;
         try {
-            ResponseUtils.wsSuccess(callback, { message: 'Запит на імпорт прийнято' }, 202);
+            if (typeof callback === 'function') {
+                callback({
+                    status: 202,
+                    success: true,
+                    message: 'Запит на імпорт прийнято',
+                    timestamp: new Date().toISOString()
+                });
+            }
             await battleStatsService.importStats(socket.authKey, data.body || data.importData);
             socket.emit('importCompleted', { key: socket.authKey, timestamp: Date.now() });
         } catch (error) {
@@ -176,7 +178,16 @@ class WebSocketHandler {
         if (!await this.validateRequest(socket, data, callback)) return;
         try {
             await battleStatsService.clearStats(socket.authKey);
-            ResponseUtils.wsSuccess(callback, { message: `Дані для ключа ${socket.authKey} успішно очищено` });
+            
+            if (typeof callback === 'function') {
+                callback({
+                    status: 200,
+                    success: true,
+                    message: `Дані для ключа ${socket.authKey} успішно очищено`,
+                    timestamp: new Date().toISOString()
+                });
+            }
+            
             this.io.to(`stats_${socket.authKey}`).emit('statsCleared', { key: socket.authKey, timestamp: Date.now() });
         } catch (error) {
             ResponseUtils.wsError(callback, 500, 'Помилка при очищенні даних', error);
@@ -191,7 +202,16 @@ class WebSocketHandler {
         }
         try {
             await battleStatsService.deleteBattle(socket.authKey, data.battleId);
-            ResponseUtils.wsSuccess(callback, { message: `Бій ${data.battleId} успішно видалено` });
+            
+            if (typeof callback === 'function') {
+                callback({
+                    status: 200,
+                    success: true,
+                    message: `Бій ${data.battleId} успішно видалено`,
+                    timestamp: new Date().toISOString()
+                });
+            }
+            
             this.io.to(`stats_${socket.authKey}`).emit('battleDeleted', { key: socket.authKey, battleId: data.battleId, timestamp: Date.now() });
         } catch (error) {
             ResponseUtils.wsError(callback, 500, 'Помилка при видаленні бою', error);
@@ -209,7 +229,16 @@ class WebSocketHandler {
 
         try {
             const result = await battleStatsService.clearDatabase();
-            ResponseUtils.wsSuccess(callback, result);
+            
+            if (typeof callback === 'function') {
+                callback({
+                    status: 200,
+                    success: true,
+                    ...result,
+                    timestamp: new Date().toISOString()
+                });
+            }
+            
             this.io.emit('databaseCleared', { timestamp: Date.now() });
         } catch (error) {
             ResponseUtils.wsError(callback, 500, 'Помилка при очищенні бази даних', error);
@@ -218,17 +247,23 @@ class WebSocketHandler {
 
     handleGetQueueStatus(socket, callback) {
         const successRate = metrics.totalRequests > 0 ? ((metrics.successfulRequests / metrics.totalRequests) * 100).toFixed(2) : '0';
-        ResponseUtils.wsSuccess(callback, {
-            queueSize: queue.size,
-            pendingCount: queue.pending,
-            isPaused: queue.isPaused,
-            metrics: {
-                totalRequests: metrics.totalRequests,
-                successfulRequests: metrics.successfulRequests,
-                failedRequests: metrics.failedRequests,
-                successRate: `${successRate}%`
-            }
-        });
+        
+        if (typeof callback === 'function') {
+            callback({
+                status: 200,
+                success: true,
+                queueSize: queue.size,
+                pendingCount: queue.pending,
+                isPaused: queue.isPaused,
+                metrics: {
+                    totalRequests: metrics.totalRequests,
+                    successfulRequests: metrics.successfulRequests,
+                    failedRequests: metrics.failedRequests,
+                    successRate: `${successRate}%`
+                },
+                timestamp: new Date().toISOString()
+            });
+        }
     }
 
     async handleJoinRoom(socket, data, callback) {
@@ -237,7 +272,16 @@ class WebSocketHandler {
         const roomName = `stats_${roomKey}`;
         socket.join(roomName);
         this.connectedClients.set(socket.id, { key: roomKey, room: roomName, connectedAt: Date.now() });
-        ResponseUtils.wsSuccess(callback, { message: `Приєднано до кімнати ${roomName}`, room: roomName });
+        
+        if (typeof callback === 'function') {
+            callback({
+                status: 200,
+                success: true,
+                message: `Приєднано до кімнати ${roomName}`,
+                room: roomName,
+                timestamp: new Date().toISOString()
+            });
+        }
     }
 
     handleLeaveRoom(socket, data, callback) {
@@ -247,7 +291,15 @@ class WebSocketHandler {
         }
         const roomName = `stats_${socket.authKey}`;
         socket.leave(roomName);
-        ResponseUtils.wsSuccess(callback, { message: `Вийшли з кімнати ${roomName}` });
+        
+        if (typeof callback === 'function') {
+            callback({
+                status: 200,
+                success: true,
+                message: `Вийшли з кімнати ${roomName}`,
+                timestamp: new Date().toISOString()
+            });
+        }
     }
 
     handleGetConnectedClients(socket, callback) {
@@ -258,7 +310,16 @@ class WebSocketHandler {
             connectedAt: info.connectedAt,
             uptime: Date.now() - info.connectedAt
         }));
-        ResponseUtils.wsSuccess(callback, { totalClients: this.io.engine.clientsCount, connectedClients: clients });
+        
+        if (typeof callback === 'function') {
+            callback({
+                status: 200,
+                success: true,
+                totalClients: this.io.engine.clientsCount,
+                connectedClients: clients,
+                timestamp: new Date().toISOString()
+            });
+        }
     }
 
     async handleDisconnect(socket, reason) {
@@ -291,7 +352,6 @@ function initializeWebSocket(io, redisClientInstance) {
         
         socket.on('updateStats', (data, callback) => wsHandler.handleUpdateStats(socket, data, callback));
         socket.on('getStats', (data, callback) => wsHandler.handleGetStats(socket, data, callback));
-        socket.on('getOtherPlayersStats', (data, callback) => wsHandler.handleGetOtherPlayersStats(socket, data, callback));
         socket.on('importStats', (data, callback) => wsHandler.handleImportStats(socket, data, callback));
         socket.on('clearStats', (data, callback) => wsHandler.handleClearStats(socket, data, callback));
         socket.on('deleteBattle', (data, callback) => wsHandler.handleDeleteBattle(socket, data, callback));
