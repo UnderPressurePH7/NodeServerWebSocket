@@ -29,13 +29,17 @@ const WEB_CONCURRENCY = Number(process.env.WEB_CONCURRENCY || 1);
 const PORT = Number(process.env.PORT || 3000);
 const IS_PROD = process.env.NODE_ENV === 'production';
 
-process.on('SIGTERM', () => {
+process.on('SIGTERM', async () => {
   console.log('SIGTERM received, shutting down gracefully');
+  await gracefulShutdown();
+  if (redisPool) await redisPool.destroy();
   process.exit(0);
 });
 
-process.on('SIGINT', () => {
+process.on('SIGINT', async () => {
   console.log('SIGINT received, shutting down gracefully');
+  await gracefulShutdown();
+  if (redisPool) await redisPool.destroy();
   process.exit(0);
 });
 
@@ -175,7 +179,7 @@ if (cluster.isPrimary && IS_PROD) {
         process.exit(1);
       }
 
-      app.get('/api/battle-stats/health', routeBuilder.addClientHeaders, (req, res) => {
+      app.get('/api/battle-stats/health', clientCors, routeBuilder.addClientHeaders, (req, res) => {
         ResponseUtils.sendSuccess(res, {
             status: 'healthy',
             type: 'client-api',
@@ -187,7 +191,7 @@ if (cluster.isPrimary && IS_PROD) {
         });
       });
 
-      app.get('/api/battle-stats/version', routeBuilder.addClientHeaders, (req, res) => {
+      app.get('/api/battle-stats/version', clientCors, routeBuilder.addClientHeaders, (req, res) => {
         ResponseUtils.sendSuccess(res, {
             version,
             name,
