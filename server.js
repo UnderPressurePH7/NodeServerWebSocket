@@ -179,7 +179,7 @@ if (cluster.isPrimary && IS_PROD) {
         process.exit(1);
       }
 
-      app.get('/api/battle-stats/health', clientCors, routeBuilder.addClientHeaders, (req, res) => {
+      app.get('/api/battle-stats/health', (req, res) => {
         ResponseUtils.sendSuccess(res, {
             status: 'healthy',
             type: 'client-api',
@@ -191,7 +191,7 @@ if (cluster.isPrimary && IS_PROD) {
         });
       });
 
-      app.get('/api/battle-stats/version', clientCors, routeBuilder.addClientHeaders, (req, res) => {
+      app.get('/api/battle-stats/version', (req, res) => {
         ResponseUtils.sendSuccess(res, {
             version,
             name,

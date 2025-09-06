@@ -1,7 +1,9 @@
 const cors = require('cors');
 
 const ALLOWED_ORIGINS = [
-    'https://underpressureph7.github.io'
+    'https://underpressureph7.github.io',
+    'http://localhost:3000',
+    'http://localhost:8080'
 ];
 
 const COMMON_HEADERS = [
@@ -15,14 +17,38 @@ const COMMON_HEADERS = [
     'X-Requested-With'
 ];
 
+const corsOptions = {
+    origin: function (origin, callback) {
+        if (!origin || ALLOWED_ORIGINS.includes(origin)) {
+            callback(null, true);
+        } else {
+            callback(null, false);
+        }
+    },
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
+    allowedHeaders: COMMON_HEADERS,
+    credentials: false,
+    maxAge: 86400,
+    optionsSuccessStatus: 200
+};
+
+const clientCors = cors(corsOptions);
+
+const serverCors = cors({
+    ...corsOptions,
+    origin: '*'
+});
+
 const createCorsMiddleware = (defaultOrigin = null, additionalMethods = []) => {
     return (req, res, next) => {
         const origin = req.headers.origin;
         
         if (!origin || ALLOWED_ORIGINS.includes(origin)) {
-            res.header('Access-Control-Allow-Origin', origin || defaultOrigin);
+            res.header('Access-Control-Allow-Origin', origin || '*');
         } else if (defaultOrigin) {
             res.header('Access-Control-Allow-Origin', defaultOrigin);
+        } else {
+            res.header('Access-Control-Allow-Origin', '*');
         }
         
         const methods = ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', ...additionalMethods];
@@ -32,20 +58,17 @@ const createCorsMiddleware = (defaultOrigin = null, additionalMethods = []) => {
         res.header('Access-Control-Max-Age', '86400');
         
         if (req.method === 'OPTIONS') {
-            return res.status(204).end();
+            return res.status(200).end();
         }
         
         next();
     };
 };
 
-const clientCors = createCorsMiddleware('https://underpressureph7.github.io');
-
-const serverCors = createCorsMiddleware('*', ['PATCH']);
-
 module.exports = { 
     clientCors, 
     serverCors, 
     ALLOWED_ORIGINS,
-    createCorsMiddleware 
+    createCorsMiddleware,
+    corsOptions
 };
