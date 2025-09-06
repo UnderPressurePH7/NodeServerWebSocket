@@ -115,7 +115,7 @@ class RouteBuilder {
         ];
     }
 
-    buildRoutes(basePath, headerMiddleware, corsMiddleware, requireSecret = false) {
+    buildRoutes(basePath, headerMiddleware, corsMiddleware, requireSecret = false, isServerEndpoint = false) {
         const routes = this.getRouteConfigs();
         
         routes.forEach(({ method, path, handler, middleware = [], requireSecret: routeRequireSecret = false }) => {
@@ -130,7 +130,7 @@ class RouteBuilder {
                 const allMiddleware = [
                     corsMiddleware,
                     headerMiddleware,
-                    unifiedAuth.createHttpMiddleware(requireSecret || routeRequireSecret),
+                    unifiedAuth.createHttpMiddleware(requireSecret || routeRequireSecret, isServerEndpoint),
                     ...middleware
                 ];
 
@@ -143,11 +143,11 @@ class RouteBuilder {
     }
 
     buildClientRoutes() {
-        this.buildRoutes('/api/battle-stats', this.addClientHeaders, clientCors, false);
+        this.buildRoutes('/api/battle-stats', this.addClientHeaders, clientCors, false, false);
     }
 
     buildServerRoutes() {
-        this.buildRoutes('/api/server', this.addServerHeaders, serverCors, true);
+        this.buildRoutes('/api/server', this.addServerHeaders, serverCors, true, true);
     }
 }
 

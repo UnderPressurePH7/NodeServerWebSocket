@@ -64,6 +64,13 @@ class UnifiedAuth {
         this.redisClient = client;
     }
 
+    isOriginAllowed(origin) {
+        const ALLOWED_ORIGINS = [
+            'https://underpressureph7.github.io'
+        ];
+        return ALLOWED_ORIGINS.includes(origin);
+    }
+
     async checkRateLimit(key, identifier) {
         try {
             if (!this.redisClient?.isOpen) {
@@ -84,12 +91,44 @@ class UnifiedAuth {
         }
     }
 
-    createHttpMiddleware(requireSecret = false) {
+    createHttpMiddleware(requireSecret = false, isServerEndpoint = false) {
         return async (req, res, next) => {
             if (req.method === 'OPTIONS') return next();
             
+            const origin = req.headers.origin;
+            const isAllowedOrigin = !origin || this.isOriginAllowed(origin);
             const authData = AuthValidationUtils.extractAuthData(req);
             const clientIp = req.ip || req.connection.remoteAddress || 'unknown';
+
+            if (isServerEndpoint) {
+                if (!authData.secretKey || !AuthValidationUtils.validateSecretKey(authData.secretKey)) {
+                    return ResponseUtils.sendError(res, {
+                        statusCode: 403,
+                        message: 'Server endpoint requires secret key'
+                    });
+                }
+                if (!authData.apiKey || !AuthValidationUtils.validateKey(authData.apiKey)) {
+                    return ResponseUtils.sendError(res, {
+                        statusCode: 403,
+                        message: 'Server endpoint requires valid API key'
+                    });
+                }
+                requireSecret = true;
+            } else {
+                if (!isAllowedOrigin) {
+                    return ResponseUtils.sendError(res, {
+                        statusCode: 403,
+                        message: 'Unauthorized origin not allowed for client endpoints'
+                    });
+                }
+                
+                if (!authData.apiKey || !AuthValidationUtils.validateKey(authData.apiKey)) {
+                    return ResponseUtils.sendError(res, {
+                        statusCode: 401,
+                        message: 'Valid API key required'
+                    });
+                }
+            }
 
             const validation = AuthValidationUtils.validateAuthForContext(
                 authData, 
@@ -113,6 +152,8 @@ class UnifiedAuth {
             }
 
             req.apiKey = authData.apiKey;
+            req.isAllowedOrigin = isAllowedOrigin;
+            req.isServerEndpoint = isServerEndpoint;
             if (authData.secretKey) {
                 req.secretKey = authData.secretKey;
             }
@@ -122,19 +163,41 @@ class UnifiedAuth {
 
     async authenticateSocket(socket, next) {
         const authData = AuthValidationUtils.extractAuthData(socket);
-        const authType = AuthValidationUtils.determineAuthType(authData);
+        const origin = socket.handshake.headers.origin;
+        const isAllowedOrigin = !origin || this.isOriginAllowed(origin);
         
-        if (authType.isValid) {
-            const sessionId = await this.createSession(socket.id, authType.key, authData.playerId);
-            socket.authKey = authType.key;
-            socket.sessionId = sessionId;
-            socket.authType = authType.type;
+        if (isAllowedOrigin) {
+            const authType = AuthValidationUtils.determineAuthType(authData);
+            if (authType.isValid) {
+                const sessionId = await this.createSession(socket.id, authType.key, authData.playerId);
+                socket.authKey = authType.key;
+                socket.sessionId = sessionId;
+                socket.authType = authType.type;
+                socket.isAllowedOrigin = true;
+                return next();
+            }
+            
+            socket.authType = 'none';
+            socket.authKey = null;
+            socket.isAllowedOrigin = true;
             return next();
+        } else {
+            if (!authData.secretKey || !AuthValidationUtils.validateSecretKey(authData.secretKey)) {
+                return next(new Error('Unauthorized origin requires secret key'));
+            }
+            
+            const authType = AuthValidationUtils.determineAuthType(authData);
+            if (authType.isValid && authType.type === 'secret_key') {
+                const sessionId = await this.createSession(socket.id, authType.key, authData.playerId);
+                socket.authKey = authType.key;
+                socket.sessionId = sessionId;
+                socket.authType = authType.type;
+                socket.isAllowedOrigin = false;
+                return next();
+            }
+            
+            return next(new Error('Invalid authentication for unauthorized origin'));
         }
-        
-        socket.authType = 'none';
-        socket.authKey = null;
-        return next();
     }
 
     async validateSocketMessage(socket, data, requiresPlayerId = false) {
