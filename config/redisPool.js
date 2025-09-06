@@ -8,6 +8,7 @@ class RedisConnectionPool {
         this.available = [];
         this.waiting = [];
         this.initialized = false;
+        this.primaryClient = null;
     }
 
     async init() {
@@ -19,6 +20,10 @@ class RedisConnectionPool {
                 await client.connect();
                 this.connections.push(client);
                 this.available.push(client);
+                
+                if (i === 0) {
+                    this.primaryClient = client;
+                }
             } catch (error) {
                 console.error(`Failed to create Redis connection ${i}:`, error);
             }
@@ -26,6 +31,13 @@ class RedisConnectionPool {
         
         this.initialized = true;
         console.log(`Redis pool initialized with ${this.available.length} connections`);
+    }
+
+    getClient() {
+        if (!this.primaryClient) {
+            throw new Error('Redis pool not initialized');
+        }
+        return this.primaryClient;
     }
 
     async acquire() {
@@ -75,6 +87,7 @@ class RedisConnectionPool {
         await Promise.all(closePromises);
         this.connections = [];
         this.available = [];
+        this.primaryClient = null;
         this.initialized = false;
     }
 

@@ -17,15 +17,9 @@ const { clientCors, serverCors, ALLOWED_ORIGINS } = require('./middleware/cors')
 const { version, name } = require('./package.json');
 const RouteBuilder = require('./utils/routeBuilder');
 
-// Імпортуємо контролер з додатковою діагностикою
 let battleStatsController;
 try {
-    console.log('Loading battleStatsController...');
     battleStatsController = require('./controllers/battleStatsController');
-    console.log('Controller loaded successfully:', {
-        type: typeof battleStatsController,
-        methods: Object.getOwnPropertyNames(battleStatsController).filter(name => typeof battleStatsController[name] === 'function')
-    });
 } catch (error) {
     console.error('CRITICAL: Failed to load battleStatsController:', error);
     process.exit(1);
@@ -57,11 +51,11 @@ class AppError extends Error {
 }
 
 if (cluster.isPrimary && IS_PROD) {
-  console.log(`🧠 Primary ${process.pid} started. Spawning ${WEB_CONCURRENCY} workers...`);
+  console.log(`Primary ${process.pid} started. Spawning ${WEB_CONCURRENCY} workers...`);
   for (let i = 0; i < WEB_CONCURRENCY; i++) cluster.fork();
 
   cluster.on('exit', (worker, code, signal) => {
-    console.warn(`⚠️  Worker ${worker.process.pid} exited. code=${code} signal=${signal}. Restarting...`);
+    console.warn(`Worker ${worker.process.pid} exited. code=${code} signal=${signal}. Restarting...`);
     cluster.fork();
   });
 } else {
@@ -92,21 +86,22 @@ if (cluster.isPrimary && IS_PROD) {
   (async () => {
     try {
       if (!redisUrl) {
-        console.warn('ℹ️  Redis URL not set. Running without Redis adapter.');
+        console.warn('Redis URL not set. Running without Redis adapter.');
       } else {
-        console.log('🔗 Connecting to Redis...');
-        redisPool = new RedisConnectionPool(redisUrl, { maxConnections: 10 });
+        console.log('Connecting to Redis...');
+        redisPool = new RedisConnectionPool(redisUrl, 5);
+        await redisPool.init();
         primaryClient = redisPool.getClient();
         setRedisClient(primaryClient);
 
         const pubClient = redisPool.getClient();
         const subClient = pubClient.duplicate();
+        await subClient.connect();
         io.adapter(createAdapter(pubClient, subClient));
-        console.log('✅ Redis adapter configured');
+        console.log('Redis adapter configured');
       }
 
       await connectDB();
-      console.log('✅ Database connected');
 
       app.use(helmet({
         contentSecurityPolicy: IS_PROD ? undefined : false,
@@ -120,7 +115,7 @@ if (cluster.isPrimary && IS_PROD) {
 
       app.use((req, res, next) => {
         if (req.method !== 'OPTIONS') {
-          console.log(`📝 ${req.method} ${req.path} - Body:`, JSON.stringify(req.body).substring(0, 200));
+          console.log(`${req.method} ${req.path} - Body:`, JSON.stringify(req.body).substring(0, 200));
         }
         next();
       });
@@ -170,29 +165,13 @@ if (cluster.isPrimary && IS_PROD) {
         });
       });
 
-      console.log('🔍 Controller diagnosis before route building:');
-      console.log('- Type:', typeof battleStatsController);
-      console.log('- Constructor:', battleStatsController.constructor?.name);
-      console.log('- Available methods:', Object.getOwnPropertyNames(battleStatsController).filter(name => typeof battleStatsController[name] === 'function'));
-      console.log('- updateStats method:', typeof battleStatsController.updateStats);
-
       let routeBuilder;
       try {
-        console.log('🛠️  Creating RouteBuilder...');
         routeBuilder = new RouteBuilder(app, battleStatsController);
-        console.log('✅ RouteBuilder created successfully');
-        
-        console.log('🔗 Building client routes...');
         routeBuilder.buildClientRoutes();
-        console.log('✅ Client routes built');
-        
-        console.log('🔗 Building server routes...');
         routeBuilder.buildServerRoutes();
-        console.log('✅ Server routes built');
-        
       } catch (routeError) {
-        console.error('❌ CRITICAL ERROR building routes:', routeError);
-        console.error('Stack:', routeError.stack);
+        console.error('CRITICAL ERROR building routes:', routeError);
         process.exit(1);
       }
 
@@ -235,20 +214,20 @@ if (cluster.isPrimary && IS_PROD) {
       });
 
       app.use((error, req, res, next) => {
-        if (!IS_PROD) console.error('❌ Error:', error);
+        if (!IS_PROD) console.error('Error:', error);
         if (!res.headersSent) {
           ResponseUtils.sendError(res, error);
         }
       });
 
       server.listen(PORT, '0.0.0.0', () => {
-        console.log(`🚀 Worker ${process.pid} listening on port ${PORT}`);
-        console.log(`📊 Environment: ${process.env.NODE_ENV || 'development'}`);
-        console.log(`🔗 CORS origins: ${ALLOWED_ORIGINS.join(', ')}`);
+        console.log(`Worker ${process.pid} listening on port ${PORT}`);
+        console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
+        console.log(`CORS origins: ${ALLOWED_ORIGINS.join(', ')}`);
       });
 
     } catch (error) {
-      console.error('❌ Failed to start server:', error);
+      console.error('Failed to start server:', error);
       process.exit(1);
     }
   })();
