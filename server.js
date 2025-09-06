@@ -21,6 +21,16 @@ const WEB_CONCURRENCY = Number(process.env.WEB_CONCURRENCY || 1);
 const PORT = Number(process.env.PORT || 3000);
 const IS_PROD = process.env.NODE_ENV === 'production';
 
+process.on('SIGTERM', () => {
+  console.log('SIGTERM received, shutting down gracefully');
+  process.exit(0);
+});
+
+process.on('SIGINT', () => {
+  console.log('SIGINT received, shutting down gracefully');
+  process.exit(0);
+});
+
 class AppError extends Error {
   constructor(message, statusCode = 500, code = 'INTERNAL_ERROR', details = null) {
     super(message);
