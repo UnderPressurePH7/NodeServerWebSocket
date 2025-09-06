@@ -78,37 +78,37 @@ class RouteBuilder {
             {
                 method: 'post',
                 path: '/update-stats',
-                handler: this.controller.updateStats.bind(this.controller),
+                handler: this.controller.updateStats,
                 middleware: []
             },
             {
                 method: 'get',
                 path: '/stats',
-                handler: this.controller.getStats.bind(this.controller),
+                handler: this.controller.getStats,
                 middleware: [this.validatePagination]
             },
             {
                 method: 'post',
                 path: '/import',
-                handler: this.controller.importStats.bind(this.controller),
+                handler: this.controller.importStats,
                 middleware: []
             },
             {
                 method: 'delete',
                 path: '/clear',
-                handler: this.controller.clearStats.bind(this.controller),
+                handler: this.controller.clearStats,
                 middleware: []
             },
             {
                 method: 'delete',
                 path: '/battle/:battleId',
-                handler: this.controller.deleteBattle.bind(this.controller),
+                handler: this.controller.deleteBattle,
                 middleware: [this.validateBattleId]
             },
             {
                 method: 'delete',
                 path: '/clear-database',
-                handler: this.controller.clearDatabase.bind(this.controller),
+                handler: this.controller.clearDatabase,
                 middleware: [],
                 requireSecret: true
             }

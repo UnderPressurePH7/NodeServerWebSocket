@@ -20,6 +20,10 @@ const RouteBuilder = require('./utils/routeBuilder');
 let battleStatsController;
 try {
     battleStatsController = require('./controllers/battleStatsController');
+    console.log('Controller loaded. Type:', typeof battleStatsController);
+    console.log('Controller methods:', Object.getOwnPropertyNames(battleStatsController).filter(name => typeof battleStatsController[name] === 'function'));
+    console.log('updateStats method:', typeof battleStatsController.updateStats);
+    console.log('getStats method:', typeof battleStatsController.getStats);
 } catch (error) {
     console.error('CRITICAL: Failed to load battleStatsController:', error);
     process.exit(1);
