@@ -1,5 +1,4 @@
 const cluster = require('cluster');
-const os = require('os');
 const http = require('http');
 const express = require('express');
 const helmet = require('helmet');
@@ -13,10 +12,9 @@ const metrics = require('./config/metrics');
 const { initializeWebSocket } = require('./routes/websockets');
 const battleStatsController = require('./controllers/battleStatsController');
 const RedisConnectionPool = require('./config/redisPool');
-const shutdownManager = require('./utils/shutdownManager');
 const ResponseUtils = require('./utils/responseUtils');
 const UnifiedRouter = require('./routes/unifiedRouter');
-const { unifiedAuth } = require('./middleware/unifiedAuth');
+const { validateKey, validateSecretKey, setRedisClient } = require('./middleware/auth');
 
 const { version, name } = require('./package.json');
 
@@ -50,7 +48,13 @@ if (cluster.isPrimary && IS_PROD) {
   const io = new Server(server, {
     cors: {
       origin: (origin, cb) => {
-        if (!origin || !IS_PROD) return cb(null, true);
+        const allowedOrigins = [
+            'https://underpressureph7.github.io',
+            'http://localhost:3000',
+            'http://127.0.0.1:3000',
+            'https://localhost:3000'
+        ];
+        if (!origin || allowedOrigins.includes(origin)) return cb(null, true);
         return cb(null, true);
       },
       methods: ['GET', 'POST'],
@@ -79,7 +83,7 @@ if (cluster.isPrimary && IS_PROD) {
         
         io.adapter(createAdapter(primaryClient, subClient));
         console.log(`🔌 Socket.IO Redis adapter connected in worker ${process.pid}.`);
-        unifiedAuth.setRedisClient(primaryClient);
+        setRedisClient(primaryClient);
       }
     } catch (err) {
       console.error(`❌ Failed to init Redis adapter in worker ${process.pid}:`, err);
@@ -89,34 +93,51 @@ if (cluster.isPrimary && IS_PROD) {
   app.set('trust proxy', 1);
   app.disable('x-powered-by');
 
-  app.use(
-    helmet({
-      contentSecurityPolicy: false
-    })
-  );
+  app.use(helmet({ contentSecurityPolicy: false }));
+  app.use(compression({
+    level: IS_PROD ? 9 : 1,
+    threshold: '1kb',
+    filter: (req, res) => !req.headers['x-no-compression']
+  }));
 
-  app.use(
-    compression({
-      level: IS_PROD ? 9 : 1,
-      threshold: '1kb',
-      filter: (req, res) => !req.headers['x-no-compression']
-    })
-  );
+  app.use(express.json({
+    limit: IS_PROD ? '2mb' : '5mb',
+    type: ['application/json', 'text/plain']
+  }));
 
-  app.use(
-    express.json({
-      limit: IS_PROD ? '2mb' : '5mb',
-      type: ['application/json', 'text/plain']
-    })
-  );
+  app.use(express.urlencoded({
+    limit: IS_PROD ? '2mb' : '5mb',
+    extended: false,
+    parameterLimit: 1000
+  }));
 
-  app.use(
-    express.urlencoded({
-      limit: IS_PROD ? '2mb' : '5mb',
-      extended: false,
-      parameterLimit: 1000
-    })
-  );
+  // CORS MIDDLEWARE
+  app.use((req, res, next) => {
+    const origin = req.headers.origin;
+    const allowedOrigins = [
+        'https://underpressureph7.github.io',
+        'http://localhost:3000',
+        'http://127.0.0.1:3000',
+        'https://localhost:3000'
+    ];
+
+    if (!origin || allowedOrigins.includes(origin)) {
+        res.header('Access-Control-Allow-Origin', origin || 'https://underpressureph7.github.io');
+    } else {
+        res.header('Access-Control-Allow-Origin', 'https://underpressureph7.github.io');
+    }
+    
+    res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+    res.header('Access-Control-Allow-Headers', 'Content-Type, X-API-Key, X-Player-ID, X-Secret-Key, Authorization, Accept, Origin, X-Requested-With');
+    res.header('Access-Control-Allow-Credentials', 'false');
+    res.header('Access-Control-Max-Age', '86400');
+    
+    if (req.method === 'OPTIONS') {
+        return res.status(204).end();
+    }
+    
+    next();
+  });
 
   server.setTimeout(30000);
   server.keepAliveTimeout = 61000;
@@ -152,44 +173,8 @@ if (cluster.isPrimary && IS_PROD) {
     }
   });
 
-  app.get('/api/health/detailed', async (req, res) => {
-    const health = {
-      status: 'ok',
-      timestamp: new Date().toISOString(),
-      uptime: Math.floor(process.uptime()),
-      memory: process.memoryUsage(),
-      connections: {
-        websocket: io?.engine?.clientsCount || 0
-      },
-      database: {
-        status: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected',
-        host: mongoose.connection.host
-      },
-      redis: {
-        status: primaryClient?.isOpen ? 'connected' : 'disconnected',
-        pool: redisPool ? redisPool.getStats() : null
-      },
-      queue: {
-        size: queue?.size || 0,
-        pending: queue?.pending || 0,
-        isPaused: queue?.isPaused || false
-      }
-    };
-    
-    const overallStatus = (
-      health.database.status === 'connected' && 
-      health.queue.size < 1000
-    ) ? 'healthy' : 'unhealthy';
-    
-    res.status(overallStatus === 'healthy' ? 200 : 503).json({
-      ...health,
-      status: overallStatus
-    });
-  });
-
   app.get('/api/queue-status', (req, res) => {
-    const successRate =
-      metrics.totalRequests > 0
+    const successRate = metrics.totalRequests > 0
         ? ((metrics.successfulRequests / metrics.totalRequests) * 100).toFixed(2)
         : '0';
 
@@ -208,202 +193,103 @@ if (cluster.isPrimary && IS_PROD) {
     });
   });
 
+  // UNIFIED ROUTER ROUTES
   const unifiedRouter = new UnifiedRouter();
 
-  const routes = [
-    {
-      method: 'post',
-      path: '/api/battle-stats/update-stats',
-      controller: battleStatsController.updateStats,
-      requirePlayerId: true,
-      cors: 'client'
-    },
-    {
-      method: 'get',
-      path: '/api/battle-stats/stats',
-      controller: battleStatsController.getStats,
-      cors: 'client',
-      additionalMiddleware: [unifiedRouter.validatePagination]
-    },
-    {
-      method: 'get',
-      path: '/api/battle-stats/other-players',
-      controller: battleStatsController.getOtherPlayersStats,
-      requirePlayerId: true,
-      cors: 'client'
-    },
-    {
-      method: 'post',
-      path: '/api/battle-stats/import',
-      controller: battleStatsController.importStats,
-      cors: 'client'
-    },
-    {
-      method: 'delete',
-      path: '/api/battle-stats/clear',
-      controller: battleStatsController.clearStats,
-      cors: 'client'
-    },
-    {
-      method: 'delete',
-      path: '/api/battle-stats/battle/:battleId',
-      controller: battleStatsController.deleteBattle,
-      cors: 'client',
-      additionalMiddleware: [unifiedRouter.validateBattleId]
-    },
-    {
-      method: 'delete',
-      path: '/api/battle-stats/clear-database',
-      controller: battleStatsController.clearDatabase,
-      requireSecret: true,
-      cors: 'client'
-    },
-    {
-      method: 'post',
-      path: '/api/server/update-stats',
-      controller: battleStatsController.updateStats,
-      requireSecret: true,
-      requirePlayerId: true,
-      cors: 'server'
-    },
-    {
-      method: 'get',
-      path: '/api/server/stats',
-      controller: battleStatsController.getStats,
-      requireSecret: true,
-      cors: 'server',
-      additionalMiddleware: [unifiedRouter.validatePagination]
-    },
-    {
-      method: 'get',
-      path: '/api/server/other-players',
-      controller: battleStatsController.getOtherPlayersStats,
-      requireSecret: true,
-      requirePlayerId: true,
-      cors: 'server'
-    },
-    {
-      method: 'post',
-      path: '/api/server/import',
-      controller: battleStatsController.importStats,
-      requireSecret: true,
-      cors: 'server'
-    },
-    {
-      method: 'delete',
-      path: '/api/server/clear',
-      controller: battleStatsController.clearStats,
-      requireSecret: true,
-      cors: 'server'
-    },
-    {
-      method: 'delete',
-      path: '/api/server/battle/:battleId',
-      controller: battleStatsController.deleteBattle,
-      requireSecret: true,
-      cors: 'server',
-      additionalMiddleware: [unifiedRouter.validateBattleId]
-    },
-    {
-      method: 'delete',
-      path: '/api/server/clear-database',
-      controller: battleStatsController.clearDatabase,
-      requireSecret: true,
-      cors: 'server'
+  // Middleware functions inline
+  const addClientHeaders = (req, res, next) => {
+    res.set({
+        'X-API-Version': version,
+        'X-Powered-By': 'BattleStats-Client-API',
+        'X-Request-ID': `cli_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+        'Cache-Control': 'no-cache, no-store, must-revalidate'
+    });
+    next();
+  };
+
+  const addServerHeaders = (req, res, next) => {
+    res.set({
+        'X-API-Version': version,
+        'X-Powered-By': 'BattleStats-Server-API',
+        'X-Request-ID': `srv_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+        'Cache-Control': 'no-cache, no-store, must-revalidate'
+    });
+    next();
+  };
+
+  const validatePlayerId = (req, res, next) => {
+    const playerId = req.headers['x-player-id'];
+    if (!playerId) {
+        return ResponseUtils.sendError(res, {
+            statusCode: 400,
+            message: 'Відсутній ID гравця в заголовку запиту (X-Player-ID)'
+        });
     }
-  ];
+    req.playerId = playerId;
+    next();
+  };
 
-  routes.forEach(route => unifiedRouter.setupRoute(route));
+  const validatePagination = (req, res, next) => {
+    req.pagination = {
+        page: parseInt(req.query.page) || 1,
+        limit: req.query.limit !== undefined ? parseInt(req.query.limit) : 10
+    };
+    next();
+  };
 
-  unifiedRouter.setupRoute({
-    method: 'get',
-    path: '/api/battle-stats/health',
-    controller: (req, res) => {
-      ResponseUtils.sendSuccess(res, {
+  const validateBattleId = (req, res, next) => {
+    if (!req.params.battleId) {
+        return ResponseUtils.sendError(res, {
+            statusCode: 400,
+            message: 'Відсутній ID бою'
+        });
+    }
+    next();
+  };
+
+  const asyncHandler = (fn) => (req, res, next) => {
+    Promise.resolve(fn(req, res, next)).catch(next);
+  };
+
+  // CLIENT ROUTES
+  app.post('/api/battle-stats/update-stats', addClientHeaders, validateKey, validatePlayerId, asyncHandler(battleStatsController.updateStats));
+  app.get('/api/battle-stats/stats', addClientHeaders, validateKey, validatePagination, asyncHandler(battleStatsController.getStats));
+  app.get('/api/battle-stats/other-players', addClientHeaders, validateKey, validatePlayerId, asyncHandler(battleStatsController.getOtherPlayersStats));
+  app.post('/api/battle-stats/import', addClientHeaders, validateKey, asyncHandler(battleStatsController.importStats));
+  app.delete('/api/battle-stats/clear', addClientHeaders, validateKey, asyncHandler(battleStatsController.clearStats));
+  app.delete('/api/battle-stats/battle/:battleId', addClientHeaders, validateKey, validateBattleId, asyncHandler(battleStatsController.deleteBattle));
+  app.delete('/api/battle-stats/clear-database', addClientHeaders, validateSecretKey, asyncHandler(battleStatsController.clearDatabase));
+
+  // SERVER ROUTES  
+  app.post('/api/server/update-stats', addServerHeaders, validateSecretKey, validateKey, validatePlayerId, asyncHandler(battleStatsController.updateStats));
+  app.get('/api/server/stats', addServerHeaders, validateSecretKey, validateKey, validatePagination, asyncHandler(battleStatsController.getStats));
+  app.get('/api/server/other-players', addServerHeaders, validateSecretKey, validateKey, validatePlayerId, asyncHandler(battleStatsController.getOtherPlayersStats));
+  app.post('/api/server/import', addServerHeaders, validateSecretKey, validateKey, asyncHandler(battleStatsController.importStats));
+  app.delete('/api/server/clear', addServerHeaders, validateSecretKey, validateKey, asyncHandler(battleStatsController.clearStats));
+  app.delete('/api/server/battle/:battleId', addServerHeaders, validateSecretKey, validateKey, validateBattleId, asyncHandler(battleStatsController.deleteBattle));
+  app.delete('/api/server/clear-database', addServerHeaders, validateSecretKey, asyncHandler(battleStatsController.clearDatabase));
+
+  // HEALTH ROUTES
+  app.get('/api/battle-stats/health', addClientHeaders, (req, res) => {
+    ResponseUtils.sendSuccess(res, {
         status: 'healthy',
         type: 'client-api',
         uptime: Math.floor(process.uptime()),
         memory: {
-          used: Math.round(process.memoryUsage().heapUsed / 1024 / 1024) + 'MB',
-          total: Math.round(process.memoryUsage().heapTotal / 1024 / 1024) + 'MB'
+            used: Math.round(process.memoryUsage().heapUsed / 1024 / 1024) + 'MB',
+            total: Math.round(process.memoryUsage().heapTotal / 1024 / 1024) + 'MB'
         }
-      });
-    },
-    cors: 'client',
-    additionalMiddleware: []
+    });
   });
 
-  unifiedRouter.setupRoute({
-    method: 'get',
-    path: '/api/battle-stats/version',
-    controller: (req, res) => {
-      ResponseUtils.sendSuccess(res, {
+  app.get('/api/battle-stats/version', addClientHeaders, (req, res) => {
+    ResponseUtils.sendSuccess(res, {
         version,
         name,
         description: 'Client API для статистики боїв',
-        authentication: 'X-API-Key заголовок обов\'язковий',
-        endpoints: [
-          'POST /update-stats - Оновлення статистики (X-Player-ID обов\'язковий)',
-          'GET /stats - Отримання статистики',
-          'GET /other-players - Статистика інших гравців (X-Player-ID обов\'язковий)',
-          'POST /import - Імпорт даних',
-          'DELETE /clear - Очищення статистики',
-          'DELETE /battle/:battleId - Видалення бою',
-          'DELETE /clear-database - Очищення БД (X-Secret-Key обов\'язковий)',
-          'GET /health - Стан сервера (без автентифікації)',
-          'GET /version - Інформація про API (без автентифікації)'
-        ]
-      });
-    },
-    cors: 'client',
-    additionalMiddleware: []
+        authentication: 'X-API-Key заголовок обов\'язковий'
+    });
   });
-
-  unifiedRouter.setupRoute({
-    method: 'get',
-    path: '/api/server/health',
-    controller: (req, res) => {
-      ResponseUtils.sendSuccess(res, {
-        status: 'healthy',
-        type: 'server-to-server',
-        uptime: Math.floor(process.uptime()),
-        memory: {
-          used: Math.round(process.memoryUsage().heapUsed / 1024 / 1024) + 'MB',
-          total: Math.round(process.memoryUsage().heapTotal / 1024 / 1024) + 'MB'
-        }
-      });
-    },
-    cors: 'server',
-    additionalMiddleware: []
-  });
-
-  unifiedRouter.setupRoute({
-    method: 'get',
-    path: '/api/server/version',
-    controller: (req, res) => {
-      ResponseUtils.sendSuccess(res, {
-        version,
-        name,
-        description: 'Server-to-server API для статистики боїв',
-        authentication: 'X-Secret-Key header required',
-        endpoints: [
-          'POST /update-stats',
-          'GET /stats',
-          'GET /other-players',
-          'POST /import',
-          'DELETE /clear',
-          'DELETE /battle/:battleId',
-          'DELETE /clear-database',
-          'GET /health',
-          'GET /version'
-        ]
-      });
-    },
-    cors: 'server',
-    additionalMiddleware: []
-  });
-
-  app.use(unifiedRouter.getRouter());
 
   app.use('*', (req, res) => {
     const error = new AppError(`Route ${req.method} ${req.originalUrl} not found`, 404);
@@ -432,36 +318,62 @@ if (cluster.isPrimary && IS_PROD) {
 
   start();
 
-  shutdownManager.registerResource('HTTP Server', () => {
-    return new Promise((resolve) => {
-      server.close(() => {
-        console.log('HTTP сервер зупинено');
-        resolve();
-      });
+  const gracefulServerShutdown = async (signal) => {
+    console.log(`🔻 Signal ${signal} received in worker ${process.pid}. Shutting down...`);
+    
+    server.close(async () => {
+      console.log('HTTP сервер зупинено');
+      
+      try {
+        if (queue && typeof queue.onIdle === 'function') {
+          await Promise.race([
+            queue.onIdle(),
+            new Promise(resolve => setTimeout(resolve, 5000))
+          ]);
+        }
+      } catch (e) {
+        console.warn('Queue shutdown timeout:', e?.message);
+      }
+      
+      try {
+        await gracefulShutdown();
+      } catch (e) {
+        console.warn('Queue graceful shutdown error:', e?.message);
+      }
+      
+      try {
+        await mongoose.disconnect();
+        console.log('✅ MongoDB disconnected.');
+      } catch (e) {
+        console.warn('Mongo disconnect error:', e?.message);
+      }
+
+      try {
+        if (redisPool) {
+          await redisPool.destroy();
+          console.log('✅ Redis pool disconnected.');
+        }
+      } catch (e) {
+        console.warn('Redis disconnect error:', e?.message);
+      }
+
+      if (cluster.worker) cluster.worker.disconnect?.();
+      process.exit(0);
     });
-  });
+    
+    setTimeout(() => {
+      console.error('Примусове завершення через тайм-аут');
+      process.exit(1);
+    }, 10000);
+  };
 
-  shutdownManager.registerResource('Queue System', async () => {
-    if (queue && typeof queue.onIdle === 'function') {
-      await Promise.race([
-        queue.onIdle(),
-        new Promise(resolve => setTimeout(resolve, 5000))
-      ]);
-    }
-    await gracefulShutdown();
-  });
+  process.on('SIGTERM', () => gracefulServerShutdown('SIGTERM'));
+  process.on('SIGINT', () => gracefulServerShutdown('SIGINT'));
 
-  shutdownManager.registerResource('MongoDB', async () => {
-    await mongoose.disconnect();
+  process.on('unhandledRejection', (reason) => {
+    console.error('UNHANDLED REJECTION:', reason);
   });
-
-  shutdownManager.registerResource('Redis Pool', async () => {
-    if (redisPool) {
-      await redisPool.destroy();
-    }
-  });
-
-  shutdownManager.registerResource('Auth Cache', async () => {
-    unifiedAuth.destroy();
+  process.on('uncaughtException', (err) => {
+    console.error('UNCAUGHT EXCEPTION:', err);
   });
 }
