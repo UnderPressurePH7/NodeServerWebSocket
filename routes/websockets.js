@@ -3,6 +3,7 @@ const battleStatsService = require('../services/battleStatsService');
 const { queue, isQueueFull } = require('../config/queue');
 const metrics = require('../config/metrics');
 const ResponseUtils = require('../utils/responseUtils');
+const AuthValidationUtils = require('../utils/authValidationUtils');
 
 const MAX_PAYLOAD_SIZE = 5 * 1024 * 1024;
 
@@ -48,22 +49,41 @@ class WebSocketHandler {
             ResponseUtils.wsError(callback, 400, 'Невалідні дані запиту');
             return false;
         }
-        if (!await unifiedAuth.validateSocketMessage(socket, data)) {
-            ResponseUtils.wsError(callback, 403, 'Помилка автентифікації');
-            return false;
-        }
-        if (socket.authType === 'secret_key' && !socket.authKey) {
-            ResponseUtils.wsError(callback, 400, 'Відсутній API ключ для server-to-server запиту');
-            return false;
-        }
-        if (requiresPlayerId && !data.playerId) {
-            ResponseUtils.wsError(callback, 400, 'Відсутній ID гравця');
-            return false;
-        }
+
         if (!this.checkPayloadSize(data)) {
             ResponseUtils.wsError(callback, 413, 'Розмір даних перевищує ліміт');
             return false;
         }
+
+        const messageAuthData = AuthValidationUtils.extractAuthData(data);
+        
+        let finalAuthData = messageAuthData;
+        if (socket.authKey) {
+            finalAuthData = {
+                ...messageAuthData,
+                [socket.authType === 'secret_key' ? 'secretKey' : 'apiKey']: socket.authKey
+            };
+        }
+
+        const isServerMode = socket.authType === 'secret_key' || !!finalAuthData.secretKey;
+        
+        const validation = AuthValidationUtils.validateAuthForContext(
+            finalAuthData,
+            isServerMode,
+            requiresPlayerId
+        );
+
+        if (!validation.isValid) {
+            console.log('❌ WebSocket auth validation failed:', validation.errors);
+            ResponseUtils.wsError(callback, 403, validation.errors.join('; '));
+            return false;
+        }
+
+        if (!await unifiedAuth.validateSocketMessage(socket, data, requiresPlayerId)) {
+            ResponseUtils.wsError(callback, 429, 'Перевищено ліміт запитів або помилка автентифікації');
+            return false;
+        }
+
         return true;
     }
 
@@ -126,16 +146,6 @@ class WebSocketHandler {
         }
     }
 
-    async handleGetOtherPlayersStats(socket, data, callback) {
-        if (!await this.validateRequest(socket, data, callback, true)) return;
-        try {
-            const result = await battleStatsService.getOtherPlayersStats(socket.authKey, data.playerId);
-            ResponseUtils.wsSuccess(callback, result);
-        } catch (error) {
-            ResponseUtils.wsError(callback, 500, 'Помилка при завантаженні даних інших гравців', error);
-        }
-    }
-
     async handleImportStats(socket, data, callback) {
         if (!await this.validateRequest(socket, data, callback)) return;
         try {
@@ -174,6 +184,14 @@ class WebSocketHandler {
     }
 
     async handleClearDatabase(socket, data, callback) {
+        const authData = AuthValidationUtils.extractAuthData(data);
+        const validation = AuthValidationUtils.validateAuthForContext(authData, true, false);
+        
+        if (!validation.isValid) {
+            ResponseUtils.wsError(callback, 403, 'Операція потребує секретний ключ');
+            return;
+        }
+
         try {
             const result = await battleStatsService.clearDatabase();
             ResponseUtils.wsSuccess(callback, result);
@@ -259,7 +277,6 @@ function initializeWebSocket(io, redisClientInstance) {
         
         socket.on('updateStats', (data, callback) => wsHandler.handleUpdateStats(socket, data, callback));
         socket.on('getStats', (data, callback) => wsHandler.handleGetStats(socket, data, callback));
-        socket.on('getOtherPlayersStats', (data, callback) => wsHandler.handleGetOtherPlayersStats(socket, data, callback));
         socket.on('importStats', (data, callback) => wsHandler.handleImportStats(socket, data, callback));
         socket.on('clearStats', (data, callback) => wsHandler.handleClearStats(socket, data, callback));
         socket.on('deleteBattle', (data, callback) => wsHandler.handleDeleteBattle(socket, data, callback));

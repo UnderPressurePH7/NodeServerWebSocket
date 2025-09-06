@@ -1,4 +1,4 @@
-const VALID_KEYS = require('../config/validKey');
+const AuthValidationUtils = require('../utils/authValidationUtils');
 const ResponseUtils = require('../utils/responseUtils');
 
 const RATE_LIMIT_MAX = 600;
@@ -85,78 +85,59 @@ class UnifiedAuth {
         }
     }
 
-    validateKey(key) {
-        return key && VALID_KEYS.includes(key);
-    }
-
-    validateSecretKey(secretKey) {
-        return secretKey && secretKey === process.env.SECRET_KEY;
-    }
-
     createHttpMiddleware(requireSecret = false) {
         return async (req, res, next) => {
             if (req.method === 'OPTIONS') return next();
             
-            const apiKey = req.headers['x-api-key'];
-            const secretKey = req.headers['x-secret-key'];
+            const authData = AuthValidationUtils.extractAuthData(req);
             const clientIp = req.ip || req.connection.remoteAddress || 'unknown';
 
-            if (requireSecret) {
-                if (!secretKey || !this.validateSecretKey(secretKey)) {
-                    return ResponseUtils.sendError(res, {
-                        statusCode: 401,
-                        message: 'Невірний або відсутній секретний ключ'
-                    });
-                }
-                req.secretKey = secretKey;
-            }
+            const validation = AuthValidationUtils.validateAuthForContext(
+                authData, 
+                requireSecret, 
+                false // playerId validation handled by separate middleware
+            );
 
-            if (!apiKey || !this.validateKey(apiKey)) {
+            if (!validation.isValid) {
+                const authResponse = AuthValidationUtils.createAuthResponse(false, validation.errors);
                 return ResponseUtils.sendError(res, {
-                    statusCode: 401,
-                    message: 'Невірний або відсутній API ключ'
+                    statusCode: authResponse.statusCode,
+                    message: authResponse.message
                 });
             }
 
-            const rateLimitKey = requireSecret ? secretKey : apiKey;
-            if (!await this.checkRateLimit(rateLimitKey, clientIp)) {
+            if (!await this.checkRateLimit(validation.keyForRateLimit, clientIp)) {
                 return ResponseUtils.sendError(res, {
                     statusCode: 429,
                     message: 'Перевищено ліміт запитів'
                 });
             }
 
-            req.apiKey = apiKey;
+            req.apiKey = authData.apiKey;
+            if (authData.secretKey) {
+                req.secretKey = authData.secretKey;
+            }
             next();
         };
     }
 
     async authenticateSocket(socket, next) {
-        const key = socket.handshake.query.key || socket.handshake.auth?.key;
-        const secretKey = socket.handshake.query.secretKey || socket.handshake.auth?.secretKey;
-        const playerId = socket.handshake.query.playerId || socket.handshake.auth?.playerId;
+        const authData = AuthValidationUtils.extractAuthData(socket);
         
         console.log('🔐 WebSocket auth attempt:', { 
-            hasKey: !!key, 
-            hasSecretKey: !!secretKey, 
-            hasPlayerId: !!playerId 
+            hasKey: !!authData.apiKey, 
+            hasSecretKey: !!authData.secretKey, 
+            hasPlayerId: !!authData.playerId 
         });
         
-        if (secretKey && this.validateSecretKey(secretKey)) {
-            console.log('✅ Valid secret key for WebSocket');
-            const sessionId = await this.createSession(socket.id, secretKey, playerId);
-            socket.authKey = secretKey;
-            socket.sessionId = sessionId;
-            socket.authType = 'secret_key';
-            return next();
-        }
+        const authType = AuthValidationUtils.determineAuthType(authData);
         
-        if (key && this.validateKey(key)) {
-            console.log('✅ Valid API key for WebSocket');
-            const sessionId = await this.createSession(socket.id, key, playerId);
-            socket.authKey = key;
+        if (authType.isValid) {
+            console.log(`✅ Valid ${authType.type} for WebSocket`);
+            const sessionId = await this.createSession(socket.id, authType.key, authData.playerId);
+            socket.authKey = authType.key;
             socket.sessionId = sessionId;
-            socket.authType = 'api_key';
+            socket.authType = authType.type;
             return next();
         }
         
@@ -172,76 +153,32 @@ class UnifiedAuth {
             return false;
         }
         
-        if (data.secretKey && this.validateSecretKey(data.secretKey)) {
-            console.log('✅ Valid secret key provided');
-            if (!data.key || !this.validateKey(data.key)) {
-                console.log('❌ Invalid API key with secret key');
-                return false;
-            }
-            if (requiresPlayerId && !data.playerId) {
-                console.log('❌ Missing playerId for secret key request');
-                return false;
-            }
-            
-            const keyForRateLimit = data.secretKey;
-            const rateLimitOk = await this.checkRateLimit(keyForRateLimit, socket.id);
-            console.log(`Rate limit check (secret): ${rateLimitOk}`);
-            return rateLimitOk;
+        // Extract auth data from message
+        const messageAuthData = AuthValidationUtils.extractAuthData(data);
+        
+        // If socket has existing auth, combine with message data
+        let finalAuthData = messageAuthData;
+        if (socket.authKey) {
+            finalAuthData = {
+                ...messageAuthData,
+                [socket.authType === 'secret_key' ? 'secretKey' : 'apiKey']: socket.authKey
+            };
         }
-        
-        if (data.key && this.validateKey(data.key)) {
-            console.log('✅ Valid API key provided');
-            if (requiresPlayerId && !data.playerId) {
-                console.log('❌ Missing playerId for API key request');
-                return false;
-            }
-            
-            const keyForRateLimit = data.key;
-            const rateLimitOk = await this.checkRateLimit(keyForRateLimit, socket.id);
-            console.log(`Rate limit check (api key): ${rateLimitOk}`);
-            return rateLimitOk;
+
+        const validation = AuthValidationUtils.validateAuthForContext(
+            finalAuthData,
+            socket.authType === 'secret_key' || !!finalAuthData.secretKey,
+            requiresPlayerId
+        );
+
+        if (!validation.isValid) {
+            console.log('❌ Auth validation failed:', validation.errors);
+            return false;
         }
-        
-        if (socket.authType === 'secret_key' && socket.authKey) {
-            console.log('✅ Using socket secret key auth');
-            if (!data.key || !this.validateKey(data.key)) {
-                console.log('❌ Invalid API key for authenticated socket');
-                return false;
-            }
-            if (requiresPlayerId && !data.playerId) {
-                console.log('❌ Missing playerId for authenticated socket');
-                return false;
-            }
-            
-            const keyForRateLimit = socket.authKey;
-            const rateLimitOk = await this.checkRateLimit(keyForRateLimit, socket.id);
-            console.log(`Rate limit check (socket auth): ${rateLimitOk}`);
-            return rateLimitOk;
-        }
-        
-        if (socket.authType === 'api_key' && socket.authKey) {
-            console.log('✅ Using socket API key auth');
-            if (data.key && data.key !== socket.authKey) {
-                console.log('❌ Key mismatch with socket auth');
-                return false;
-            }
-            if (requiresPlayerId && !data.playerId) {
-                console.log('❌ Missing playerId for API key socket');
-                return false;
-            }
-            
-            const keyForRateLimit = socket.authKey;
-            const rateLimitOk = await this.checkRateLimit(keyForRateLimit, socket.id);
-            console.log(`Rate limit check (socket api): ${rateLimitOk}`);
-            return rateLimitOk;
-        }
-        
-        console.log('❌ No valid authentication method found');
-        console.log('Data keys:', Object.keys(data));
-        console.log('Socket authType:', socket.authType);
-        console.log('Socket authKey:', !!socket.authKey);
-        
-        return false;
+
+        const rateLimitOk = await this.checkRateLimit(validation.keyForRateLimit, socket.id);
+        console.log(`Rate limit check: ${rateLimitOk}`);
+        return rateLimitOk;
     }
 
     async createSession(socketId, key, playerId) {
@@ -332,8 +269,8 @@ const unifiedAuth = new UnifiedAuth();
 module.exports = {
     unifiedAuth,
     setRedisClient: (client) => unifiedAuth.setRedisClient(client),
-    validateKey: (key) => unifiedAuth.validateKey(key),
-    validateSecretKey: (secretKey) => unifiedAuth.validateSecretKey(secretKey),
+    validateKey: (key) => AuthValidationUtils.validateKey(key),
+    validateSecretKey: (secretKey) => AuthValidationUtils.validateSecretKey(secretKey),
     createSession: (socketId, key, playerId) => unifiedAuth.createSession(socketId, key, playerId),
     validateSession: (socketId, key, playerId) => unifiedAuth.validateSession(socketId, key, playerId),
     cleanupSession: (socketId) => unifiedAuth.cleanupSession(socketId),

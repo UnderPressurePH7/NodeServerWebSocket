@@ -14,12 +14,15 @@ const battleStatsController = require('./controllers/battleStatsController');
 const RedisConnectionPool = require('./config/redisPool');
 const ResponseUtils = require('./utils/responseUtils');
 const { unifiedAuth, setRedisClient } = require('./middleware/unifiedAuth');
-const { clientCors, serverCors } = require('./middleware/cors');
+const { clientCors, serverCors, ALLOWED_ORIGINS } = require('./middleware/cors');
 const { version, name } = require('./package.json');
+const RouteBuilder = require('./utils/routeBuilder');
 
 const WEB_CONCURRENCY = Number(process.env.WEB_CONCURRENCY || 1);
 const PORT = Number(process.env.PORT || 3000);
 const IS_PROD = process.env.NODE_ENV === 'production';
+
+const CORS_ORIGINS = ALLOWED_ORIGINS;
 
 process.on('SIGTERM', () => {
   console.log('SIGTERM received, shutting down gracefully');
@@ -56,12 +59,7 @@ if (cluster.isPrimary && IS_PROD) {
 
   const io = new Server(server, {
     cors: {
-      origin: [
-        'https://underpressureph7.github.io',
-        'http://localhost:3000',
-        'http://127.0.0.1:3000',
-        'https://localhost:3000'
-      ],
+      origin: ALLOWED_ORIGINS,
       methods: ['GET', 'POST'],
       credentials: false,
       allowedHeaders: ['Content-Type', 'X-API-Key', 'X-Player-ID', 'X-Secret-Key']
@@ -72,18 +70,7 @@ if (cluster.isPrimary && IS_PROD) {
     allowEIO3: true,
     allowRequest: (req, callback) => {
       const origin = req.headers.origin;
-      const allowedOrigins = [
-        'https://underpressureph7.github.io',
-        'http://localhost:3000',
-        'http://127.0.0.1:3000',
-        'https://localhost:3000'
-      ];
-      
-      if (!origin || allowedOrigins.includes(origin)) {
-        callback(null, true);
-      } else {
-        callback(null, true);
-      }
+      callback(null, !origin || ALLOWED_ORIGINS.includes(origin));
     }
   });
 
@@ -188,160 +175,12 @@ if (cluster.isPrimary && IS_PROD) {
     });
   });
 
-  const addClientHeaders = (req, res, next) => {
-    res.set({
-        'X-API-Version': version,
-        'X-Powered-By': 'BattleStats-Client-API',
-        'X-Request-ID': `cli_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-        'Cache-Control': 'no-cache, no-store, must-revalidate'
-    });
-    next();
-  };
+  const routeBuilder = new RouteBuilder(app, battleStatsController);
 
-  const addServerHeaders = (req, res, next) => {
-    res.set({
-        'X-API-Version': version,
-        'X-Powered-By': 'BattleStats-Server-API',
-        'X-Request-ID': `srv_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-        'Cache-Control': 'no-cache, no-store, must-revalidate'
-    });
-    next();
-  };
+  routeBuilder.buildClientRoutes();
+  routeBuilder.buildServerRoutes();
 
-  const validatePlayerId = (req, res, next) => {
-    const playerId = req.headers['x-player-id'];
-    if (!playerId) {
-        return ResponseUtils.sendError(res, {
-            statusCode: 400,
-            message: 'Відсутній ID гравця в заголовку запиту (X-Player-ID)'
-        });
-    }
-    req.playerId = playerId;
-    next();
-  };
-
-  const validatePagination = (req, res, next) => {
-    req.pagination = {
-        page: parseInt(req.query.page) || 1,
-        limit: req.query.limit !== undefined ? parseInt(req.query.limit) : 10
-    };
-    next();
-  };
-
-  const validateBattleId = (req, res, next) => {
-    if (!req.params.battleId) {
-        return ResponseUtils.sendError(res, {
-            statusCode: 400,
-            message: 'Відсутній ID бою'
-        });
-    }
-    next();
-  };
-
-  const asyncHandler = (fn) => (req, res, next) => {
-    Promise.resolve(fn(req, res, next)).catch(next);
-  };
-
-  app.post('/api/battle-stats/update-stats', 
-    addClientHeaders, 
-    unifiedAuth.createHttpMiddleware(), 
-    validatePlayerId, 
-    asyncHandler(battleStatsController.updateStats)
-  );
-  
-  app.get('/api/battle-stats/stats', 
-    addClientHeaders, 
-    unifiedAuth.createHttpMiddleware(), 
-    validatePagination, 
-    asyncHandler(battleStatsController.getStats)
-  );
-  
-  app.get('/api/battle-stats/other-players', 
-    addClientHeaders, 
-    unifiedAuth.createHttpMiddleware(), 
-    validatePlayerId, 
-    asyncHandler(battleStatsController.getOtherPlayersStats)
-  );
-  
-  app.post('/api/battle-stats/import', 
-    addClientHeaders, 
-    unifiedAuth.createHttpMiddleware(), 
-    asyncHandler(battleStatsController.importStats)
-  );
-  
-  app.delete('/api/battle-stats/clear', 
-    addClientHeaders, 
-    unifiedAuth.createHttpMiddleware(), 
-    asyncHandler(battleStatsController.clearStats)
-  );
-  
-  app.delete('/api/battle-stats/battle/:battleId', 
-    addClientHeaders, 
-    unifiedAuth.createHttpMiddleware(), 
-    validateBattleId, 
-    asyncHandler(battleStatsController.deleteBattle)
-  );
-  
-  app.delete('/api/battle-stats/clear-database', 
-    addClientHeaders, 
-    unifiedAuth.createHttpMiddleware(true), 
-    asyncHandler(battleStatsController.clearDatabase)
-  );
-
-  app.post('/api/server/update-stats', 
-    serverCors,
-    addServerHeaders, 
-    unifiedAuth.createHttpMiddleware(true), 
-    validatePlayerId, 
-    asyncHandler(battleStatsController.updateStats)
-  );
-  
-  app.get('/api/server/stats', 
-    serverCors,
-    addServerHeaders, 
-    unifiedAuth.createHttpMiddleware(true), 
-    validatePagination, 
-    asyncHandler(battleStatsController.getStats)
-  );
-  
-  app.get('/api/server/other-players', 
-    serverCors,
-    addServerHeaders, 
-    unifiedAuth.createHttpMiddleware(true), 
-    validatePlayerId, 
-    asyncHandler(battleStatsController.getOtherPlayersStats)
-  );
-  
-  app.post('/api/server/import', 
-    serverCors,
-    addServerHeaders, 
-    unifiedAuth.createHttpMiddleware(true), 
-    asyncHandler(battleStatsController.importStats)
-  );
-  
-  app.delete('/api/server/clear', 
-    serverCors,
-    addServerHeaders, 
-    unifiedAuth.createHttpMiddleware(true), 
-    asyncHandler(battleStatsController.clearStats)
-  );
-  
-  app.delete('/api/server/battle/:battleId', 
-    serverCors,
-    addServerHeaders, 
-    unifiedAuth.createHttpMiddleware(true), 
-    validateBattleId, 
-    asyncHandler(battleStatsController.deleteBattle)
-  );
-  
-  app.delete('/api/server/clear-database', 
-    serverCors,
-    addServerHeaders, 
-    unifiedAuth.createHttpMiddleware(true), 
-    asyncHandler(battleStatsController.clearDatabase)
-  );
-
-  app.get('/api/battle-stats/health', addClientHeaders, (req, res) => {
+  app.get('/api/battle-stats/health', routeBuilder.addClientHeaders, (req, res) => {
     ResponseUtils.sendSuccess(res, {
         status: 'healthy',
         type: 'client-api',
@@ -353,7 +192,7 @@ if (cluster.isPrimary && IS_PROD) {
     });
   });
 
-  app.get('/api/battle-stats/version', addClientHeaders, (req, res) => {
+  app.get('/api/battle-stats/version', routeBuilder.addClientHeaders, (req, res) => {
     ResponseUtils.sendSuccess(res, {
         version,
         name,
@@ -369,12 +208,7 @@ if (cluster.isPrimary && IS_PROD) {
         transport: 'websocket, polling'
       },
       cors: {
-        origins: [
-          'https://underpressureph7.github.io',
-          'http://localhost:3000',
-          'http://127.0.0.1:3000',
-          'https://localhost:3000'
-        ]
+        origins: ALLOWED_ORIGINS
       }
     });
   });
