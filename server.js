@@ -46,23 +46,35 @@ if (cluster.isPrimary && IS_PROD) {
 
   const io = new Server(server, {
     cors: {
-      origin: (origin, cb) => {
-        const allowedOrigins = [
-            'https://underpressureph7.github.io',
-            'http://localhost:3000',
-            'http://127.0.0.1:3000',
-            'https://localhost:3000'
-        ];
-        if (!origin || allowedOrigins.includes(origin)) return cb(null, true);
-        return cb(null, true);
-      },
+      origin: [
+        'https://underpressureph7.github.io',
+        'http://localhost:3000',
+        'http://127.0.0.1:3000',
+        'https://localhost:3000'
+      ],
       methods: ['GET', 'POST'],
-      credentials: false
+      credentials: false,
+      allowedHeaders: ['Content-Type', 'X-API-Key', 'X-Player-ID', 'X-Secret-Key']
     },
     transports: ['websocket', 'polling'],
     pingTimeout: 60000,
     pingInterval: 25000,
-    allowEIO3: true
+    allowEIO3: true,
+    allowRequest: (req, callback) => {
+      const origin = req.headers.origin;
+      const allowedOrigins = [
+        'https://underpressureph7.github.io',
+        'http://localhost:3000',
+        'http://127.0.0.1:3000',
+        'https://localhost:3000'
+      ];
+      
+      if (!origin || allowedOrigins.includes(origin)) {
+        callback(null, true);
+      } else {
+        callback(null, true);
+      }
+    }
   });
 
   const redisUrl = process.env.REDISCLOUD_URL || process.env.REDIS_URL || null;
@@ -369,6 +381,11 @@ if (cluster.isPrimary && IS_PROD) {
   });
 
   initializeWebSocket(io, primaryClient);
+  battleStatsController.setIo(io);
+
+  io.engine.on('connection_error', (err) => {
+    console.error('Socket.IO connection error:', err);
+  });
 
   const start = async () => {
     try {
