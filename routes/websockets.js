@@ -69,7 +69,7 @@ class WebSocketHandler {
         
         const validation = AuthValidationUtils.validateAuthForContext(
             finalAuthData,
-            isServerMode,
+            isServerMode, 
             requiresPlayerId
         );
 
@@ -217,7 +217,7 @@ class WebSocketHandler {
     }
 
     async handleJoinRoom(socket, data, callback) {
-        if (!await this.validateRequest(socket, data, callback)) return;
+        if (!await this.validateRequest(socket, data, callback, false)) return;
         const roomKey = socket.authKey;
         const roomName = `stats_${roomKey}`;
         socket.join(roomName);
@@ -277,6 +277,7 @@ function initializeWebSocket(io, redisClientInstance) {
         
         socket.on('updateStats', (data, callback) => wsHandler.handleUpdateStats(socket, data, callback));
         socket.on('getStats', (data, callback) => wsHandler.handleGetStats(socket, data, callback));
+        socket.on('getOtherPlayersStats', (data, callback) => wsHandler.handleGetOtherPlayersStats(socket, data, callback));
         socket.on('importStats', (data, callback) => wsHandler.handleImportStats(socket, data, callback));
         socket.on('clearStats', (data, callback) => wsHandler.handleClearStats(socket, data, callback));
         socket.on('deleteBattle', (data, callback) => wsHandler.handleDeleteBattle(socket, data, callback));

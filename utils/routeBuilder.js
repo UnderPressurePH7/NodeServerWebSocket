@@ -29,18 +29,6 @@ class RouteBuilder {
         next();
     };
 
-    validatePlayerId = (req, res, next) => {
-        const playerId = req.headers['x-player-id'];
-        if (!playerId) {
-            return ResponseUtils.sendError(res, {
-                statusCode: 400,
-                message: 'Відсутній ID гравця в заголовку запиту (X-Player-ID)'
-            });
-        }
-        req.playerId = playerId;
-        next();
-    };
-
     validatePagination = (req, res, next) => {
         req.pagination = {
             page: parseInt(req.query.page) || 1,
@@ -62,6 +50,7 @@ class RouteBuilder {
     asyncHandler = (fn) => (req, res, next) => {
         Promise.resolve(fn(req, res, next)).catch(next);
     };
+
     getRouteConfigs() {
         return [
             {

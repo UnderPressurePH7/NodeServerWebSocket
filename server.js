@@ -22,7 +22,7 @@ const WEB_CONCURRENCY = Number(process.env.WEB_CONCURRENCY || 1);
 const PORT = Number(process.env.PORT || 3000);
 const IS_PROD = process.env.NODE_ENV === 'production';
 
-const CORS_ORIGINS = ALLOWED_ORIGINS;
+
 
 process.on('SIGTERM', () => {
   console.log('SIGTERM received, shutting down gracefully');
@@ -98,6 +98,7 @@ if (cluster.isPrimary && IS_PROD) {
     }
   })();
 
+  // Configure Express
   app.set('trust proxy', 1);
   app.disable('x-powered-by');
 
@@ -125,6 +126,7 @@ if (cluster.isPrimary && IS_PROD) {
   server.keepAliveTimeout = 61000;
   server.headersTimeout = 62000;
 
+  // Health endpoints
   app.get('/', (req, res) => {
     ResponseUtils.sendSuccess(res, {
       message: 'Сервер працює!',
@@ -175,11 +177,16 @@ if (cluster.isPrimary && IS_PROD) {
     });
   });
 
+  // Build routes using RouteBuilder
   const routeBuilder = new RouteBuilder(app, battleStatsController);
-
+  
+  // Client API routes: CORS enabled, Secret Key NOT required
   routeBuilder.buildClientRoutes();
+  
+  // Server-to-Server API routes: Secret Key required, CORS disabled
   routeBuilder.buildServerRoutes();
 
+  // Utility endpoints
   app.get('/api/battle-stats/health', routeBuilder.addClientHeaders, (req, res) => {
     ResponseUtils.sendSuccess(res, {
         status: 'healthy',
