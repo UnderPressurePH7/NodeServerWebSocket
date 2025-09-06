@@ -1,7 +1,6 @@
 const mongoose = require('mongoose');
 
 const MONGODB_URI = process.env.MONGODB_URI;
-
 const MAX_RETRIES = 5;
 const RETRY_DELAY = 5000;
 
@@ -10,11 +9,9 @@ const connectDB = async (retryCount = 0) => {
     connectTimeoutMS: 10000,
     socketTimeoutMS: 45000,
     serverSelectionTimeoutMS: 5000,
-
     maxPoolSize: 10,
     minPoolSize: 2,
     maxIdleTimeMS: 30000,
-
     bufferCommands: false,
     retryWrites: true,
     retryReads: true
@@ -57,28 +54,6 @@ mongoose.connection.on('reconnected', () => {
 
 mongoose.connection.on('close', () => {
   console.log('❎ З\'єднання з MongoDB закрито');
-});
-
-process.on('SIGINT', async () => {
-  try {
-    await mongoose.connection.close();
-    console.log('🔌 MongoDB з\'єднання закрито через завершення програми');
-    process.exit(0);
-  } catch (err) {
-    console.error('Помилка при закритті з\'єднання:', err);
-    process.exit(1);
-  }
-});
-
-process.on('SIGTERM', async () => {
-  try {
-    await mongoose.connection.close();
-    console.log('🔌 MongoDB з\'єднання закрито через SIGTERM');
-    process.exit(0);
-  } catch (err) {
-    console.error('Помилка при закритті з\'єднання:', err);
-    process.exit(1);
-  }
 });
 
 module.exports = connectDB;

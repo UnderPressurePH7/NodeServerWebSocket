@@ -210,9 +210,6 @@ class PerKeyQueueManager {
 
 const queueManager = new PerKeyQueueManager();
 
-process.on('SIGINT', () => queueManager.gracefulShutdown());
-process.on('SIGTERM', () => queueManager.gracefulShutdown());
-
 module.exports = {
     queue: queueManager.defaultQueue,
     queueManager,

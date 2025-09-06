@@ -441,14 +441,4 @@ class BattleStatsService {
 
 const battleStatsService = new BattleStatsService();
 
-process.on('SIGINT', async () => {
-    await battleStatsService.flushPendingUpdates();
-    battleStatsService.destroy();
-});
-
-process.on('SIGTERM', async () => {
-    await battleStatsService.flushPendingUpdates();
-    battleStatsService.destroy();
-});
-
 module.exports = battleStatsService;

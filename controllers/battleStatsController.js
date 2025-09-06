@@ -1,34 +1,27 @@
 const battleStatsService = require('../services/battleStatsService');
 const { queueManager, isQueueFull, getQueueStats } = require('../config/queue');
 const metrics = require('../config/metrics');
+const ResponseUtils = require('../utils/responseUtils');
 
 const battleStatsController = {
     updateStats: (req, res) => {
         const key = req.apiKey;
-        const playerId = req.headers['x-player-id'];
+        const playerId = req.playerId;
 
         if (isQueueFull(key)) {
-            return res.status(503).json({
-                error: 'Service Unavailable',
-                message: 'Сервер перевантажено, спробуйте пізніше',
-            });
-        }
-
-        if (!playerId) {
-            return res.status(400).json({
-                error: 'Bad Request',
-                message: 'Відсутній ID гравця в заголовку запиту (X-Player-ID)',
+            return ResponseUtils.sendError(res, {
+                statusCode: 503,
+                message: 'Сервер перевантажено, спробуйте пізніше'
             });
         }
 
         metrics.totalRequests++;
         const queueStats = getQueueStats();
         
-        res.status(202).json({
-            success: true,
+        ResponseUtils.sendSuccess(res, {
             message: 'Запит прийнято на обробку',
             queueStats: queueStats.perKeyQueues[key] || queueStats.defaultQueue
-        });
+        }, {}, 202);
 
         queueManager.addWithRetry(
             key,
@@ -57,15 +50,16 @@ const battleStatsController = {
     getStats: async (req, res) => {
         try {
             const key = req.apiKey;
-            const page = parseInt(req.query.page) || 1;
-            const limit = req.query.limit !== undefined ? parseInt(req.query.limit) : 10;
+            const page = req.pagination?.page || parseInt(req.query.page) || 1;
+            const limit = req.pagination?.limit !== undefined ? req.pagination.limit : 
+                         (req.query.limit !== undefined ? parseInt(req.query.limit) : 10);
 
             const result = await battleStatsService.getStats(key, page, limit);
-            res.status(200).json(result);
+            ResponseUtils.sendSuccess(res, result);
         } catch (error) {
             console.error('❌ Помилка при завантаженні даних:', error);
-            res.status(500).json({
-                error: 'Internal Server Error',
+            ResponseUtils.sendError(res, {
+                statusCode: 500,
                 message: 'Помилка при завантаженні даних'
             });
         }
@@ -74,21 +68,14 @@ const battleStatsController = {
     getOtherPlayersStats: async (req, res) => {
         try {
             const key = req.apiKey;
-            const excludePlayerId = req.headers['x-player-id'];
-
-            if (!excludePlayerId) {
-                return res.status(400).json({
-                    success: false,
-                    message: 'Відсутній ID гравця в заголовку запиту (X-Player-ID)'
-                });
-            }
+            const excludePlayerId = req.playerId;
 
             const result = await battleStatsService.getOtherPlayersStats(key, excludePlayerId);
-            res.status(200).json(result);
+            ResponseUtils.sendSuccess(res, result);
         } catch (error) {
             console.error('❌ Помилка при завантаженні даних інших гравців:', error);
-            res.status(500).json({
-                error: 'Internal Server Error',
+            ResponseUtils.sendError(res, {
+                statusCode: 500,
                 message: 'Помилка при завантаженні даних інших гравців'
             });
         }
@@ -97,10 +84,9 @@ const battleStatsController = {
     importStats: async (req, res) => {
         const key = req.apiKey;
 
-        res.status(202).json({
-            success: true,
+        ResponseUtils.sendSuccess(res, {
             message: 'Запит на імпорт прийнято'
-        });
+        }, {}, 202);
 
         queueManager.addWithRetry(
             key,
@@ -118,8 +104,7 @@ const battleStatsController = {
     clearStats: async (req, res) => {
         const key = req.apiKey;
 
-        res.status(200).json({
-            success: true,
+        ResponseUtils.sendSuccess(res, {
             message: `Запит на очищення даних для ключа ${key} прийнято`
         });
 
@@ -139,10 +124,9 @@ const battleStatsController = {
         const key = req.apiKey;
         const battleId = req.params.battleId;
 
-        res.status(202).json({
-            success: true,
+        ResponseUtils.sendSuccess(res, {
             message: `Запит на видалення бою ${battleId} прийнято`
-        });
+        }, {}, 202);
 
         queueManager.addWithRetry(
             key,
@@ -160,12 +144,12 @@ const battleStatsController = {
     clearDatabase: async (req, res) => {
         try {
             const result = await battleStatsService.clearDatabase();
-            res.status(200).json(result);
+            ResponseUtils.sendSuccess(res, result);
         } catch (error) {
             console.error('❌ Помилка при очищенні бази даних:', error);
-            res.status(500).json({
-                success: false,
-                message: 'Помилка при очищенні бази даних',
+            ResponseUtils.sendError(res, {
+                statusCode: 500,
+                message: 'Помилка при очищенні бази даних'
             });
         }
     },

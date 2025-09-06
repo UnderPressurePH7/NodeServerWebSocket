@@ -11,12 +11,14 @@ const connectDB = require('./config/database');
 const { queue, gracefulShutdown } = require('./config/queue');
 const metrics = require('./config/metrics');
 const { initializeWebSocket } = require('./routes/websockets');
-const battleStatsRoutes = require('./routes/battleStats');     
-const serverBattleStatsRoutes = require('./routes/serverBattleStats');
+const battleStatsController = require('./controllers/battleStatsController');
 const RedisConnectionPool = require('./config/redisPool');
+const shutdownManager = require('./utils/shutdownManager');
+const ResponseUtils = require('./utils/responseUtils');
+const UnifiedRouter = require('./routes/unifiedRouter');
+const { unifiedAuth } = require('./middleware/unifiedAuth');
 
-const { version } = require('./package.json');
-const { setRedisClient } = require('./middleware/auth');
+const { version, name } = require('./package.json');
 
 const WEB_CONCURRENCY = Number(process.env.WEB_CONCURRENCY || 1);
 const PORT = Number(process.env.PORT || 3000);
@@ -30,21 +32,6 @@ class AppError extends Error {
     this.details = details;
     this.isOperational = true;
     Error.captureStackTrace(this, this.constructor);
-  }
-}
-class ValidationError extends AppError {
-  constructor(message, details = null) {
-    super(message, 400, 'VALIDATION_ERROR', details);
-  }
-}
-class NotFoundError extends AppError {
-  constructor(message = 'Resource not found') {
-    super(message, 404, 'NOT_FOUND');
-  }
-}
-class ServerError extends AppError {
-  constructor(message = 'Internal server error') {
-    super(message, 500, 'INTERNAL_ERROR');
   }
 }
 
@@ -92,7 +79,7 @@ if (cluster.isPrimary && IS_PROD) {
         
         io.adapter(createAdapter(primaryClient, subClient));
         console.log(`🔌 Socket.IO Redis adapter connected in worker ${process.pid}.`);
-        setRedisClient(primaryClient);
+        unifiedAuth.setRedisClient(primaryClient);
       }
     } catch (err) {
       console.error(`❌ Failed to init Redis adapter in worker ${process.pid}:`, err);
@@ -135,32 +122,8 @@ if (cluster.isPrimary && IS_PROD) {
   server.keepAliveTimeout = 61000;
   server.headersTimeout = 62000;
 
-  const sendSuccess = (res, data = {}, status = 200) => {
-    res.status(status).json({
-      success: true,
-      data,
-      timestamp: new Date().toISOString()
-    });
-  };
-
-  const sendError = (res, err) => {
-    const status = err.statusCode || 500;
-    const payload = {
-      success: false,
-      error: {
-        code: err.code || 'UNKNOWN_ERROR',
-        message: err.message || 'Error',
-        statusCode: status
-      },
-      timestamp: new Date().toISOString()
-    };
-    if (!IS_PROD && err.stack) payload.error.stack = err.stack;
-    if (err.details) payload.error.details = err.details;
-    res.status(status).json(payload);
-  };
-
   app.get('/', (req, res) => {
-    sendSuccess(res, {
+    ResponseUtils.sendSuccess(res, {
       message: 'Сервер працює!',
       version,
       environment: process.env.NODE_ENV,
@@ -171,7 +134,7 @@ if (cluster.isPrimary && IS_PROD) {
   app.get('/api/status', async (req, res) => {
     try {
       const memory = process.memoryUsage();
-      sendSuccess(res, {
+      ResponseUtils.sendSuccess(res, {
         status: 'ok',
         database: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected',
         uptime: Math.floor(process.uptime()),
@@ -185,7 +148,7 @@ if (cluster.isPrimary && IS_PROD) {
         worker: process.pid
       });
     } catch (e) {
-      sendError(res, new ServerError('Status check failed'));
+      ResponseUtils.sendError(res, new AppError('Status check failed', 500));
     }
   });
 
@@ -230,7 +193,7 @@ if (cluster.isPrimary && IS_PROD) {
         ? ((metrics.successfulRequests / metrics.totalRequests) * 100).toFixed(2)
         : '0';
 
-    sendSuccess(res, {
+    ResponseUtils.sendSuccess(res, {
       queue: {
         size: queue.size,
         pending: queue.pending,
@@ -245,15 +208,212 @@ if (cluster.isPrimary && IS_PROD) {
     });
   });
 
-  app.use('/api/battle-stats', battleStatsRoutes);
-  app.use('/api/server', serverBattleStatsRoutes);
+  const unifiedRouter = new UnifiedRouter();
 
-  app.use((req, res, next) => next(new NotFoundError(`Route ${req.method} ${req.path} not found`)));
+  const routes = [
+    {
+      method: 'post',
+      path: '/api/battle-stats/update-stats',
+      controller: battleStatsController.updateStats,
+      requirePlayerId: true,
+      cors: 'client'
+    },
+    {
+      method: 'get',
+      path: '/api/battle-stats/stats',
+      controller: battleStatsController.getStats,
+      cors: 'client',
+      additionalMiddleware: [unifiedRouter.validatePagination]
+    },
+    {
+      method: 'get',
+      path: '/api/battle-stats/other-players',
+      controller: battleStatsController.getOtherPlayersStats,
+      requirePlayerId: true,
+      cors: 'client'
+    },
+    {
+      method: 'post',
+      path: '/api/battle-stats/import',
+      controller: battleStatsController.importStats,
+      cors: 'client'
+    },
+    {
+      method: 'delete',
+      path: '/api/battle-stats/clear',
+      controller: battleStatsController.clearStats,
+      cors: 'client'
+    },
+    {
+      method: 'delete',
+      path: '/api/battle-stats/battle/:battleId',
+      controller: battleStatsController.deleteBattle,
+      cors: 'client',
+      additionalMiddleware: [unifiedRouter.validateBattleId]
+    },
+    {
+      method: 'delete',
+      path: '/api/battle-stats/clear-database',
+      controller: battleStatsController.clearDatabase,
+      requireSecret: true,
+      cors: 'client'
+    },
+    {
+      method: 'post',
+      path: '/api/server/update-stats',
+      controller: battleStatsController.updateStats,
+      requireSecret: true,
+      requirePlayerId: true,
+      cors: 'server'
+    },
+    {
+      method: 'get',
+      path: '/api/server/stats',
+      controller: battleStatsController.getStats,
+      requireSecret: true,
+      cors: 'server',
+      additionalMiddleware: [unifiedRouter.validatePagination]
+    },
+    {
+      method: 'get',
+      path: '/api/server/other-players',
+      controller: battleStatsController.getOtherPlayersStats,
+      requireSecret: true,
+      requirePlayerId: true,
+      cors: 'server'
+    },
+    {
+      method: 'post',
+      path: '/api/server/import',
+      controller: battleStatsController.importStats,
+      requireSecret: true,
+      cors: 'server'
+    },
+    {
+      method: 'delete',
+      path: '/api/server/clear',
+      controller: battleStatsController.clearStats,
+      requireSecret: true,
+      cors: 'server'
+    },
+    {
+      method: 'delete',
+      path: '/api/server/battle/:battleId',
+      controller: battleStatsController.deleteBattle,
+      requireSecret: true,
+      cors: 'server',
+      additionalMiddleware: [unifiedRouter.validateBattleId]
+    },
+    {
+      method: 'delete',
+      path: '/api/server/clear-database',
+      controller: battleStatsController.clearDatabase,
+      requireSecret: true,
+      cors: 'server'
+    }
+  ];
+
+  routes.forEach(route => unifiedRouter.setupRoute(route));
+
+  unifiedRouter.setupRoute({
+    method: 'get',
+    path: '/api/battle-stats/health',
+    controller: (req, res) => {
+      ResponseUtils.sendSuccess(res, {
+        status: 'healthy',
+        type: 'client-api',
+        uptime: Math.floor(process.uptime()),
+        memory: {
+          used: Math.round(process.memoryUsage().heapUsed / 1024 / 1024) + 'MB',
+          total: Math.round(process.memoryUsage().heapTotal / 1024 / 1024) + 'MB'
+        }
+      });
+    },
+    cors: 'client',
+    additionalMiddleware: []
+  });
+
+  unifiedRouter.setupRoute({
+    method: 'get',
+    path: '/api/battle-stats/version',
+    controller: (req, res) => {
+      ResponseUtils.sendSuccess(res, {
+        version,
+        name,
+        description: 'Client API для статистики боїв',
+        authentication: 'X-API-Key заголовок обов\'язковий',
+        endpoints: [
+          'POST /update-stats - Оновлення статистики (X-Player-ID обов\'язковий)',
+          'GET /stats - Отримання статистики',
+          'GET /other-players - Статистика інших гравців (X-Player-ID обов\'язковий)',
+          'POST /import - Імпорт даних',
+          'DELETE /clear - Очищення статистики',
+          'DELETE /battle/:battleId - Видалення бою',
+          'DELETE /clear-database - Очищення БД (X-Secret-Key обов\'язковий)',
+          'GET /health - Стан сервера (без автентифікації)',
+          'GET /version - Інформація про API (без автентифікації)'
+        ]
+      });
+    },
+    cors: 'client',
+    additionalMiddleware: []
+  });
+
+  unifiedRouter.setupRoute({
+    method: 'get',
+    path: '/api/server/health',
+    controller: (req, res) => {
+      ResponseUtils.sendSuccess(res, {
+        status: 'healthy',
+        type: 'server-to-server',
+        uptime: Math.floor(process.uptime()),
+        memory: {
+          used: Math.round(process.memoryUsage().heapUsed / 1024 / 1024) + 'MB',
+          total: Math.round(process.memoryUsage().heapTotal / 1024 / 1024) + 'MB'
+        }
+      });
+    },
+    cors: 'server',
+    additionalMiddleware: []
+  });
+
+  unifiedRouter.setupRoute({
+    method: 'get',
+    path: '/api/server/version',
+    controller: (req, res) => {
+      ResponseUtils.sendSuccess(res, {
+        version,
+        name,
+        description: 'Server-to-server API для статистики боїв',
+        authentication: 'X-Secret-Key header required',
+        endpoints: [
+          'POST /update-stats',
+          'GET /stats',
+          'GET /other-players',
+          'POST /import',
+          'DELETE /clear',
+          'DELETE /battle/:battleId',
+          'DELETE /clear-database',
+          'GET /health',
+          'GET /version'
+        ]
+      });
+    },
+    cors: 'server',
+    additionalMiddleware: []
+  });
+
+  app.use(unifiedRouter.getRouter());
+
+  app.use('*', (req, res) => {
+    const error = new AppError(`Route ${req.method} ${req.originalUrl} not found`, 404);
+    ResponseUtils.sendError(res, error);
+  });
 
   app.use((error, req, res, next) => {
     if (!IS_PROD) console.error('❌ Error:', error);
-    if (!(error instanceof AppError)) error = new ServerError();
-    sendError(res, error);
+    if (!(error instanceof AppError)) error = new AppError('Internal server error', 500);
+    ResponseUtils.sendError(res, error);
   });
 
   initializeWebSocket(io, primaryClient);
@@ -272,62 +432,36 @@ if (cluster.isPrimary && IS_PROD) {
 
   start();
 
-  const gracefulServerShutdown = async (signal) => {
-    console.log(`🔻 Signal ${signal} received in worker ${process.pid}. Shutting down...`);
-    
-    server.close(async () => {
-      console.log('HTTP сервер зупинено');
-      
-      try {
-        if (queue && typeof queue.onIdle === 'function') {
-          await Promise.race([
-            queue.onIdle(),
-            new Promise(resolve => setTimeout(resolve, 5000))
-          ]);
-        }
-      } catch (e) {
-        console.warn('Queue shutdown timeout:', e?.message);
-      }
-      
-      try {
-        await gracefulShutdown();
-      } catch (e) {
-        console.warn('Queue graceful shutdown error:', e?.message);
-      }
-      
-      try {
-        await mongoose.disconnect();
-        console.log('✅ MongoDB disconnected.');
-      } catch (e) {
-        console.warn('Mongo disconnect error:', e?.message);
-      }
-
-      try {
-        if (redisPool) {
-          await redisPool.destroy();
-          console.log('✅ Redis pool disconnected.');
-        }
-      } catch (e) {
-        console.warn('Redis disconnect error:', e?.message);
-      }
-
-      if (cluster.worker) cluster.worker.disconnect?.();
-      process.exit(0);
+  shutdownManager.registerResource('HTTP Server', () => {
+    return new Promise((resolve) => {
+      server.close(() => {
+        console.log('HTTP сервер зупинено');
+        resolve();
+      });
     });
-    
-    setTimeout(() => {
-      console.error('Примусове завершення через тайм-аут');
-      process.exit(1);
-    }, 10000);
-  };
-
-  process.on('SIGTERM', () => gracefulServerShutdown('SIGTERM'));
-  process.on('SIGINT', () => gracefulServerShutdown('SIGINT'));
-
-  process.on('unhandledRejection', (reason) => {
-    console.error('UNHANDLED REJECTION:', reason);
   });
-  process.on('uncaughtException', (err) => {
-    console.error('UNCAUGHT EXCEPTION:', err);
+
+  shutdownManager.registerResource('Queue System', async () => {
+    if (queue && typeof queue.onIdle === 'function') {
+      await Promise.race([
+        queue.onIdle(),
+        new Promise(resolve => setTimeout(resolve, 5000))
+      ]);
+    }
+    await gracefulShutdown();
+  });
+
+  shutdownManager.registerResource('MongoDB', async () => {
+    await mongoose.disconnect();
+  });
+
+  shutdownManager.registerResource('Redis Pool', async () => {
+    if (redisPool) {
+      await redisPool.destroy();
+    }
+  });
+
+  shutdownManager.registerResource('Auth Cache', async () => {
+    unifiedAuth.destroy();
   });
 }
