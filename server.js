@@ -13,7 +13,7 @@ const { initializeWebSocket } = require('./routes/websockets');
 const RedisConnectionPool = require('./config/redisPool');
 const ResponseUtils = require('./utils/responseUtils');
 const { unifiedAuth, setRedisClient } = require('./middleware/unifiedAuth');
-const { clientCors, globalCors, ALLOWED_ORIGINS } = require('./middleware/cors');
+const { clientCors, serverCors, ALLOWED_ORIGINS } = require('./middleware/cors');
 const { version, name } = require('./package.json');
 const RouteBuilder = require('./utils/routeBuilder');
 const battleStatsController = require('./controllers/battleStatsController');
@@ -111,7 +111,7 @@ if (cluster.isPrimary && IS_PROD) {
 
       app.set('trust proxy', true);
 
-      app.use(globalCors);
+      app.use(serverCors);
 
       initializeWebSocket(io);
 
@@ -157,6 +157,8 @@ if (cluster.isPrimary && IS_PROD) {
           }
         });
       });
+       
+      const routeBuilder = new RouteBuilder(app, battleStatsController);
 
       app.get('/api/battle-stats/health', clientCors, routeBuilder.addClientHeaders, (req, res) => {
         ResponseUtils.sendSuccess(res, {
