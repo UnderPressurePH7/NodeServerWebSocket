@@ -158,24 +158,6 @@ if (cluster.isPrimary && IS_PROD) {
         });
       });
 
-      let routeBuilder;
-      try {
-        console.log('Creating RouteBuilder...');
-        console.log('battleStatsController type:', typeof battleStatsController);
-        console.log('battleStatsController keys:', Object.keys(battleStatsController));
-        
-        console.log('Testing individual methods:');
-        console.log('updateStats:', typeof battleStatsController.updateStats, battleStatsController.updateStats);
-        console.log('getStats:', typeof battleStatsController.getStats, battleStatsController.getStats);
-        
-        routeBuilder = new RouteBuilder(app, battleStatsController);
-        routeBuilder.buildClientRoutes();
-        routeBuilder.buildServerRoutes();
-      } catch (routeError) {
-        console.error('CRITICAL ERROR building routes:', routeError);
-        process.exit(1);
-      }
-
       app.get('/api/battle-stats/health', clientCors, routeBuilder.addClientHeaders, (req, res) => {
         ResponseUtils.sendSuccess(res, {
             status: 'healthy',
