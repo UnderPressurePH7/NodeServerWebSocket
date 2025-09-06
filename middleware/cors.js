@@ -20,12 +20,12 @@ const createCorsMiddleware = (defaultOrigin = null, additionalMethods = []) => {
         const origin = req.headers.origin;
         
         if (!origin || ALLOWED_ORIGINS.includes(origin)) {
-            res.header('Access-Control-Allow-Origin', origin || defaultOrigin);
-        } else if (defaultOrigin) {
-            res.header('Access-Control-Allow-Origin', defaultOrigin);
+            res.header('Access-Control-Allow-Origin', origin || defaultOrigin || '*');
+        } else {
+            res.header('Access-Control-Allow-Origin', defaultOrigin || '*');
         }
         
-        const methods = ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', ...additionalMethods];
+        const methods = ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH', ...additionalMethods];
         res.header('Access-Control-Allow-Methods', methods.join(', '));
         res.header('Access-Control-Allow-Headers', COMMON_HEADERS.join(', '));
         res.header('Access-Control-Allow-Credentials', 'false');
@@ -43,9 +43,12 @@ const clientCors = createCorsMiddleware('https://underpressureph7.github.io');
 
 const serverCors = createCorsMiddleware('*', ['PATCH']);
 
+const globalCors = createCorsMiddleware('*');
+
 module.exports = { 
     clientCors, 
     serverCors, 
+    globalCors,
     ALLOWED_ORIGINS,
     createCorsMiddleware 
 };

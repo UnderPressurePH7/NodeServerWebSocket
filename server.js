@@ -13,7 +13,7 @@ const { initializeWebSocket } = require('./routes/websockets');
 const RedisConnectionPool = require('./config/redisPool');
 const ResponseUtils = require('./utils/responseUtils');
 const { unifiedAuth, setRedisClient } = require('./middleware/unifiedAuth');
-const { clientCors, serverCors, ALLOWED_ORIGINS } = require('./middleware/cors');
+const { clientCors, serverCors, globalCors, ALLOWED_ORIGINS } = require('./middleware/cors');
 const { version, name } = require('./package.json');
 const RouteBuilder = require('./utils/routeBuilder');
 
@@ -116,6 +116,8 @@ if (cluster.isPrimary && IS_PROD) {
       app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
       app.set('trust proxy', true);
+
+      app.use(globalCors);
 
       app.use((req, res, next) => {
         if (req.method !== 'OPTIONS') {
