@@ -67,7 +67,6 @@ class UnifiedAuth {
     async checkRateLimit(key, identifier) {
         try {
             if (!this.redisClient?.isOpen) {
-                console.warn('Redis недоступний - пропускаємо rate limiting');
                 return true;
             }
             
@@ -95,7 +94,7 @@ class UnifiedAuth {
             const validation = AuthValidationUtils.validateAuthForContext(
                 authData, 
                 requireSecret, 
-                false // playerId validation handled by separate middleware
+                false
             );
 
             if (!validation.isValid) {
@@ -123,17 +122,9 @@ class UnifiedAuth {
 
     async authenticateSocket(socket, next) {
         const authData = AuthValidationUtils.extractAuthData(socket);
-        
-        console.log('🔐 WebSocket auth attempt:', { 
-            hasKey: !!authData.apiKey, 
-            hasSecretKey: !!authData.secretKey, 
-            hasPlayerId: !!authData.playerId 
-        });
-        
         const authType = AuthValidationUtils.determineAuthType(authData);
         
         if (authType.isValid) {
-            console.log(`✅ Valid ${authType.type} for WebSocket`);
             const sessionId = await this.createSession(socket.id, authType.key, authData.playerId);
             socket.authKey = authType.key;
             socket.sessionId = sessionId;
@@ -141,7 +132,6 @@ class UnifiedAuth {
             return next();
         }
         
-        console.log('⚠️ WebSocket connection without initial auth - will validate per message');
         socket.authType = 'none';
         socket.authKey = null;
         return next();
@@ -149,14 +139,11 @@ class UnifiedAuth {
 
     async validateSocketMessage(socket, data, requiresPlayerId = false) {
         if (!data || typeof data !== 'object') {
-            console.log('❌ Invalid data format');
             return false;
         }
         
-        // Extract auth data from message
         const messageAuthData = AuthValidationUtils.extractAuthData(data);
         
-        // If socket has existing auth, combine with message data
         let finalAuthData = messageAuthData;
         if (socket.authKey) {
             finalAuthData = {
@@ -172,12 +159,10 @@ class UnifiedAuth {
         );
 
         if (!validation.isValid) {
-            console.log('❌ Auth validation failed:', validation.errors);
             return false;
         }
 
         const rateLimitOk = await this.checkRateLimit(validation.keyForRateLimit, socket.id);
-        console.log(`Rate limit check: ${rateLimitOk}`);
         return rateLimitOk;
     }
 
