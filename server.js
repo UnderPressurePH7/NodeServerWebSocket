@@ -29,6 +29,24 @@ try {
     process.exit(1);
 }
 
+let routeBuilder;
+  try {
+      console.log('Creating RouteBuilder...');
+      console.log('battleStatsController type:', typeof battleStatsController);
+      console.log('battleStatsController keys:', Object.keys(battleStatsController));
+        
+      console.log('Testing individual methods:');
+      console.log('updateStats:', typeof battleStatsController.updateStats, battleStatsController.updateStats);
+      console.log('getStats:', typeof battleStatsController.getStats, battleStatsController.getStats);
+        
+      routeBuilder = new RouteBuilder(app, battleStatsController);
+      routeBuilder.buildClientRoutes();
+      routeBuilder.buildServerRoutes();
+    } catch (routeError) {
+      console.error('CRITICAL ERROR building routes:', routeError);
+      process.exit(1);
+    }
+
 const WEB_CONCURRENCY = Number(process.env.WEB_CONCURRENCY || 1);
 const PORT = Number(process.env.PORT || 3000);
 const IS_PROD = process.env.NODE_ENV === 'production';
